@@ -25,14 +25,19 @@ type Limits interface {
 	MaxQueryLookback(userID string) time.Duration
 
 	// MaxQueryLength returns the limit of the length (in time) of a query.
+	// --query-range.max-query-length 默认值 0.
 	MaxQueryLength(string) time.Duration
 
 	// MaxQueryParallelism returns the limit to the number of split queries the
 	// frontend will process in parallel.
+	// --query-range.max-query-parallelism 默认值: 14
+	// --labels.max-query-parallelism 默认值: 14
 	MaxQueryParallelism(string) int
 
 	// MaxCacheFreshness returns the period after which results are cacheable,
 	// to prevent caching of very recent results.
+	// --query-range.response-cache-max-freshnes 默认值: 1m
+	// --labels.response-cache-max-freshness 默认值: 1m
 	MaxCacheFreshness(string) time.Duration
 }
 
@@ -51,11 +56,11 @@ func NewLimitsMiddleware(l Limits) Middleware {
 	})
 }
 
+// Do 检查 --query-range.max-query-length 限制(end - start的查询范围长度).
 func (l limitsMiddleware) Do(ctx context.Context, r Request) (Response, error) {
 	log, ctx := spanlogger.New(ctx, "limits")
 	defer log.Finish()
 
-	// TODO 这有一个问题啊, 如果没有拿到租户id, 这块会报错. 那thanos默认给增加租户id了?
 	tenantIDs, err := tenant.TenantIDs(ctx)
 	if err != nil {
 		return nil, httpgrpc.Errorf(http.StatusBadRequest, "%s", err.Error())
@@ -89,6 +94,7 @@ func (l limitsMiddleware) Do(ctx context.Context, r Request) (Response, error) {
 	}
 
 	// Enforce the max query length.
+	// 检查 query range 时间范围查询长度是否超过 limit, 若 limit = 0, 则没有限制.
 	if maxQueryLength := validation.SmallestPositiveNonZeroDurationPerTenant(tenantIDs, l.MaxQueryLength); maxQueryLength > 0 {
 		queryLen := timestamp.Time(r.GetEnd()).Sub(timestamp.Time(r.GetStart()))
 		if queryLen > maxQueryLength {

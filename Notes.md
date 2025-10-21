@@ -57,7 +57,14 @@
 
 7. InstrumentMiddleware(InstrumentHandler)
    该函数用于记录 next.Do 的执行时间指标 cortext_frontend_query_range_duration_seconds{method="", status_code="", tripperware=""}, 这里需要注意 metrics 中的 query_range 不是特指 Prometheus QueryRange 查询, 而是表示范围类查询, 因此包括 /api/v1/labels, /api/v1/label/.+/values, /api/v1/series 的查询. 在 thanos frontend 中 tripperware 共包括 labels, query, query_range 类别.
-8. 
+
+8. LimitsMiddleware
+   1. LabelsTripper, QueryRangeTripper 使用该层, 参数与命令行对应设置已在 internal/cortex/querier/queryrange/limit.go:Limit接口中注释
+   2. 当前我在看的这个版本 LimitsMiddleware 并没有实现 TenantLimit 功能, 但是已经预留扩展位.
+   3. 根据 --query-range.max-query-length 检查 end - start 查询的时间范围长度是否超过设置的默认值. 默认值 0. 0 表示没有限制, 否则判断 end - time 是否超过限制, 若是则直接返回, 不会再继续下层请求处理..
+
+
+9.  
 
 ### 问题
 1. pkg/queryfrontend/request.go:ThanosLabelsRequest 中各个参数的作用都是由谁负责实现的, 具体功能是什么?
