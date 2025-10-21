@@ -78,7 +78,7 @@ func (cfg *Config) Validate(qCfg querier.Config) error {
 	return nil
 }
 
-// HandlerFunc is like http.HandlerFunc, but for Handler.
+// HandlerFunc Handler 接口的函数适配器.
 type HandlerFunc func(context.Context, Request) (Response, error)
 
 // Do implements Handler.
@@ -91,23 +91,23 @@ type Handler interface {
 	Do(context.Context, Request) (Response, error)
 }
 
-// MiddlewareFunc is like http.HandlerFunc, but for Middleware.
+// MiddlewareFunc Middleware 接口类型的函数适配器.
 type MiddlewareFunc func(Handler) Handler
 
-// Wrap implements Middleware.
 func (q MiddlewareFunc) Wrap(h Handler) Handler {
 	return q(h)
 }
 
-// Middleware is a higher order Handler.
+// Middleware 是 Handler 中间层封装器.
 type Middleware interface {
 	Wrap(Handler) Handler
 }
 
-// MergeMiddlewares produces a middleware that applies multiple middleware in turn;
-// ie Merge(f,g,h).Wrap(handler) == f.Wrap(g.Wrap(h.Wrap(handler)))
+// MergeMiddlewares 返回的是 Middleware. 根据 middlerware 倒叙顺序逐层在 next 外层封装.
+// 其在实际中的执行顺序是 middleware 中的添加顺序, 最后执行 next
 func MergeMiddlewares(middleware ...Middleware) Middleware {
 	return MiddlewareFunc(func(next Handler) Handler {
+		// middleware 倒叙遍历. 也是倒叙封装
 		for i := len(middleware) - 1; i >= 0; i-- {
 			next = middleware[i].Wrap(next)
 		}
@@ -115,13 +115,12 @@ func MergeMiddlewares(middleware ...Middleware) Middleware {
 	})
 }
 
-// Tripperware is a signature for all http client-side middleware.
+// Tripperware 是所有 http 客户端侧中间层的签名
 type Tripperware func(http.RoundTripper) http.RoundTripper
 
-// RoundTripFunc is to http.RoundTripper what http.HandlerFunc is to http.Handler.
+// RoundTripFunc http.RoundTripper 接口的函数适配器.
 type RoundTripFunc func(*http.Request) (*http.Response, error)
 
-// RoundTrip implements http.RoundTripper.
 func (f RoundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
 	return f(r)
 }
@@ -212,6 +211,8 @@ func NewTripperware(
 	}, c, nil
 }
 
+// roundTripper 该类型为 RoundTripper-Handler Adapter.
+// 由 RoundTrip 函数, 由 http.RoundTripper 进入 Handler, 再由 Do 回到 http.RoundTripper.
 type roundTripper struct {
 	next    http.RoundTripper
 	handler Handler
@@ -219,21 +220,22 @@ type roundTripper struct {
 	headers []string
 }
 
-// NewRoundTripper merges a set of middlewares into an handler, then inject it into the `next` roundtripper
-// using the codec to translate requests and responses.
+// NewRoundTripper 创建 RoundTripper-Handler Adapter, 并基于参数 Middleware 注入 Handler 链.
 func NewRoundTripper(next http.RoundTripper, codec Codec, headers []string, middlewares ...Middleware) http.RoundTripper {
 	transport := roundTripper{
 		next:    next,
 		codec:   codec,
 		headers: headers,
 	}
+
+	// 这里就是
 	transport.handler = MergeMiddlewares(middlewares...).Wrap(&transport)
 	return transport
 }
 
+// RoundTrip 核心功能 http.Request 编码为 Request -> Handler.Do -> 解码 Response 到 http.Response
 func (q roundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
-
-	// include the headers specified in the roundTripper during decoding the request.
+	// 将 http.Request 编码为 Request.
 	request, err := q.codec.DecodeRequest(r.Context(), r, q.headers)
 	if err != nil {
 		return nil, err
@@ -243,15 +245,17 @@ func (q roundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
 		request.LogToSpan(span)
 	}
 
+	// 调用 handler 执行实际请求.
 	response, err := q.handler.Do(r.Context(), request)
 	if err != nil {
 		return nil, err
 	}
 
+	// 解码 Response 到 http.Response.
 	return q.codec.EncodeResponse(r.Context(), response)
 }
 
-// Do implements Handler.
+// Do 核心功能 Request 编码为 http.Request -> http.RoundTripper.RoundTrip -> 解码 http.Response 为 Response
 func (q roundTripper) Do(ctx context.Context, r Request) (Response, error) {
 	request, err := q.codec.EncodeRequest(ctx, r)
 	if err != nil {
@@ -267,7 +271,16 @@ func (q roundTripper) Do(ctx context.Context, r Request) (Response, error) {
 		return nil, err
 	}
 	defer func() {
+		// 仅关闭响应体不够安全.
+		// Go 的 http.Transport 内部有一个连接复用的机制(Keep-Alive), 如果读取完 Body 并正常关闭, 就会把底层 TCP 连接"复用"给下一个请求.
+		// 但是, 如果未读取完 Body 就关闭 Close, Transport 认为这次连接状态"未知", 不会复用, 甚至直接丢弃.
+		// io.Copy(io.Discard, io.LimitReader(response.Body, 1024)) 确实不能完全读取完毕请求体, 但是这是一个折中的方案.
+		// 1. 错误响应时, 一般返回的信息都很短, 1KB 足够读取完并复用.
+		// 2. 正确响应时, 一般会读取完请求体内容. 如果没有读取完, 我们再读取 1KB 的数据还没有读取完是避免长时间阻塞或浪费带宽
+		//
+		// 读 1024 是一种“尽力清理但不保证可复用”的优化策略.
 		io.Copy(io.Discard, io.LimitReader(response.Body, 1024))
+
 		_ = response.Body.Close()
 	}()
 

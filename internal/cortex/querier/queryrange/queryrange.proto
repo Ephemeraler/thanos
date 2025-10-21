@@ -1,17 +1,25 @@
 // Copyright (c) The Cortex Authors.
 // Licensed under the Apache License 2.0.
 
+// 语法版本.
 syntax = "proto3";
 
+// 该 package 与编程语言中的包名不完全等价.
 package queryrange;
 
+// 生成 golang 代码时 Go 包路径.
 option go_package = "queryrange";
 
+// 主要用于生成更快、更紧凑的 Go 代码
 import "gogoproto/gogo.proto";
+
+// 引入 Google 官方 protobuf 中定义的 Duration 类型，表示时间间隔
 import "google/protobuf/duration.proto";
 import "cortex/cortexpb/cortex.proto";
+// 引入 Any 类型 —— 是 protobuf 提供的一个动态类型容器，可以封装任何其他 protobuf 消息结构
 import "google/protobuf/any.proto";
 
+// 为所有 message 生成 marshaler 和 unmarshaler 方法
 option (gogoproto.marshaler_all) = true;
 option (gogoproto.unmarshaler_all) = true;
 
@@ -19,6 +27,7 @@ message PrometheusRequestHeader {
   string Name = 1 [(gogoproto.jsontag) = "-"];
   repeated string Values = 2 [(gogoproto.jsontag) = "-"];
 }
+
 message PrometheusRequest {
   string path = 1;
   int64 start = 2;

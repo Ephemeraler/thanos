@@ -177,7 +177,10 @@ func registerQueryFrontend(app *extkingpin.App) {
 	})
 }
 
+// parseTransportConfiguration 解析 downstream tripper 配置并返回 http.Transport 对象.
+// 默认 max_idle_conns 为 100, idle_conn_timeout 为 90s, TLS 握手超时为 10s, expect_continue_timeout 为 1s.
 func parseTransportConfiguration(downstreamTripperConfContentYaml []byte) (*http.Transport, error) {
+	// 使用默认配置创建 Transport.
 	downstreamTripper := &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
 		DialContext: (&net.Dialer{
@@ -192,6 +195,7 @@ func parseTransportConfiguration(downstreamTripperConfContentYaml []byte) (*http
 		ExpectContinueTimeout: 1 * time.Second,
 	}
 
+	// 解析自定义 Transport 配置, 并覆盖默认配置.
 	if len(downstreamTripperConfContentYaml) > 0 {
 		tripperConfig := &queryfrontend.DownstreamTripperConfig{}
 		if err := yaml.UnmarshalStrict(downstreamTripperConfContentYaml, tripperConfig); err != nil {
@@ -231,6 +235,15 @@ func parseTransportConfiguration(downstreamTripperConfContentYaml []byte) (*http
 	return downstreamTripper, nil
 }
 
+// runQueryFrontend
+// 参数:
+// g - goroutine 管理器
+// logger - 日志对象
+// reg - Prometheus 注册表
+// tracer - OpenTracing 跟踪器
+// TODO: httpLogOpts -
+// cfg - query frontend 配置
+// comp - 组件标识
 func runQueryFrontend(
 	g *run.Group,
 	logger log.Logger,
@@ -301,21 +314,24 @@ func runQueryFrontend(
 		}
 	}
 
+	// 用于封装 roundTripper
 	tripperWare, err := queryfrontend.NewTripperware(cfg.Config, reg, logger)
 	if err != nil {
 		return errors.Wrap(err, "setup tripperwares")
 	}
 
-	// Create a downstream roundtripper.
 	downstreamTripperConfContentYaml, err := cfg.DownstreamTripperConfig.CachePathOrContent.Content()
 	if err != nil {
 		return err
 	}
+
+	// http.Transport.
 	downstreamTripper, err := parseTransportConfiguration(downstreamTripperConfContentYaml)
 	if err != nil {
 		return err
 	}
 
+	// DownstreamTripper.
 	roundTripper, err := cortexfrontend.NewDownstreamRoundTripper(cfg.DownstreamURL, downstreamTripper)
 	if err != nil {
 		return errors.Wrap(err, "setup downstream roundtripper")
@@ -324,6 +340,7 @@ func runQueryFrontend(
 	// Wrap the downstream RoundTripper into query frontend Tripperware.
 	roundTripper = tripperWare(roundTripper)
 
+	// TODO
 	// Create the query frontend transport.
 	handler := transport.NewHandler(*cfg.CortexHandlerConfig, roundTripper, logger, nil)
 	if cfg.CompressResponses {
@@ -340,21 +357,28 @@ func runQueryFrontend(
 	logMiddleware := logging.NewHTTPServerMiddleware(logger, httpLogOpts...)
 	ins := extpromhttp.NewTenantInstrumentationMiddleware(cfg.TenantHeader, cfg.DefaultTenant, reg, nil)
 
-	// Start metrics HTTP server.
+	// HTTP Server.
 	{
+		// 创建 http server, 并默认注册 observability api.
 		srv := httpserver.New(logger, reg, comp, httpProbe,
 			httpserver.WithListen(cfg.http.bindAddress),
 			httpserver.WithGracePeriod(time.Duration(cfg.http.gracePeriod)),
 			httpserver.WithTLSConfig(cfg.http.tlsConfig),
 		)
 
+		// 封装 HandlerFunc, 增加 Tracing 和 CORS 支持.
 		instr := func(f http.HandlerFunc) http.HandlerFunc {
 			hf := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// 提取 orgId
 				orgId := extractOrgId(cfg, r)
 				name := "query-frontend"
+
+				// 设置 CORS
 				if !cfg.webDisableCORS {
 					api.SetCORS(w)
 				}
+
+				// tracing 相关
 				middleware.RequestID(
 					tracing.HTTPMiddleware(
 						tracer,
@@ -370,8 +394,11 @@ func runQueryFrontend(
 			})
 			return hf
 		}
+
+		// 注册核心业务.
 		srv.Handle("/", instr(handler.ServeHTTP))
 
+		// 启动 http server.
 		g.Add(func() error {
 			statusProber.Healthy()
 
@@ -389,6 +416,7 @@ func runQueryFrontend(
 	return nil
 }
 
+// extractOrgId 从请求头中提取 org id(废弃警告).
 func extractOrgId(conf *queryFrontendConfig, r *http.Request) string {
 	for _, header := range conf.orgIdHeaders {
 		headerVal := r.Header.Get(header)

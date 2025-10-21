@@ -125,7 +125,7 @@ type response struct {
 	Warnings  []string    `json:"warnings,omitempty"`
 }
 
-// SetCORS enables cross-site script calls.
+// SetCORS 设置跨域响应头
 func SetCORS(w http.ResponseWriter) {
 	for h, v := range corsHeaders {
 		w.Header().Set(h, v)

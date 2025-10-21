@@ -26,31 +26,35 @@ import (
 // A Server defines parameters for serve HTTP requests, a wrapper around http.Server.
 type Server struct {
 	logger log.Logger
-	comp   component.Component
-	prober *prober.HTTPProbe
+	comp   component.Component // 所属组件
+	prober *prober.HTTPProbe   // 组件服务探活器
 
-	mux *http.ServeMux
-	srv *http.Server
+	mux *http.ServeMux // Multiplexer
+	srv *http.Server   // HTTP server
 
-	opts options
+	opts options // 也不一定每个组件都使用到这里面的选项, 保持扩展性.
 }
 
-// New creates a new Server.
+// New 创建 http server, 并默认注册 observability api.
 func New(logger log.Logger, reg *prometheus.Registry, comp component.Component, prober *prober.HTTPProbe, opts ...Option) *Server {
+	// 配置 http server 的选项.
 	options := options{}
 	for _, o := range opts {
 		o.apply(&options)
 	}
 
+	// 创建 multiplexer 或使用可选配置中的 multiplexer.
 	mux := http.NewServeMux()
 	if options.mux != nil {
 		mux = options.mux
 	}
 
+	// 注册 observability 相关的路由.
 	registerMetrics(mux, reg)
 	registerProbes(mux, prober, logger)
 	registerProfiler(mux)
 
+	// 根据配置选项决定是否启用 http2, 并配置 multiplexer.
 	var h http.Handler
 	if options.enableH2C {
 		h2s := &http2.Server{}
@@ -69,9 +73,10 @@ func New(logger log.Logger, reg *prometheus.Registry, comp component.Component, 
 	}
 }
 
-// ListenAndServe listens on the TCP network address and handles requests on incoming connections.
+// ListenAndServe 启动监听服务
 func (s *Server) ListenAndServe() error {
 	level.Info(s.logger).Log("msg", "listening for requests and metrics", "address", s.opts.listen)
+	// 验证 TLS 配置文件是否存在, 配置是否有效.
 	err := toolkit_web.Validate(s.opts.tlsConfigPath)
 	if err != nil {
 		return errors.Wrap(err, "server could not be started")
@@ -86,15 +91,16 @@ func (s *Server) ListenAndServe() error {
 	return errors.Wrap(toolkit_web.ListenAndServe(s.srv, flags, logutil.GoKitLogToSlog(s.logger)), "serve HTTP and metrics")
 }
 
-// Shutdown gracefully shuts down the server by waiting,
-// for specified amount of time (by gracePeriod) for connections to return to idle and then shut down.
+// ShutDown 关闭监听服务.
 func (s *Server) Shutdown(err error) {
 	level.Info(s.logger).Log("msg", "internal server is shutting down", "err", err)
+	// 用于判断退出的原因是主动调用, 还是服务启动失败.
 	if err == http.ErrServerClosed {
 		level.Warn(s.logger).Log("msg", "internal server closed unexpectedly")
 		return
 	}
 
+	// 是否优雅关闭.
 	if s.opts.gracePeriod == 0 {
 		s.srv.Close()
 		level.Info(s.logger).Log("msg", "internal server is shutdown", "err", err)
@@ -111,11 +117,12 @@ func (s *Server) Shutdown(err error) {
 	level.Info(s.logger).Log("msg", "internal server is shutdown gracefully", "err", err)
 }
 
-// Handle registers the handler for the given pattern.
+// Handle 注册路由、绑定处理函数.
 func (s *Server) Handle(pattern string, handler http.Handler) {
 	s.mux.Handle(pattern, handler)
 }
 
+// registerProfiler 注册 pprof 路由, 用于性能分析.
 func registerProfiler(mux *http.ServeMux) {
 	mux.HandleFunc("/debug/pprof/", pprof.Index)
 	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
@@ -124,6 +131,7 @@ func registerProfiler(mux *http.ServeMux) {
 	mux.Handle("/debug/fgprof", fgprof.Handler())
 }
 
+// registerMetrics 注册 /metrics 路由, 用于暴露 Prometheus 指标.
 func registerMetrics(mux *http.ServeMux, g prometheus.Gatherer) {
 	if g != nil {
 		mux.Handle("/metrics", promhttp.HandlerFor(g, promhttp.HandlerOpts{
@@ -132,6 +140,7 @@ func registerMetrics(mux *http.ServeMux, g prometheus.Gatherer) {
 	}
 }
 
+// registerProbes 注册健康检查和就绪检查的路由.
 func registerProbes(mux *http.ServeMux, p *prober.HTTPProbe, logger log.Logger) {
 	if p != nil {
 		mux.Handle("/-/healthy", p.HealthyHandler(logger))

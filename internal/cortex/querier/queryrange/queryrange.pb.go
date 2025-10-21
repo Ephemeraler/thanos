@@ -142,6 +142,7 @@ func (m *PrometheusRequest) GetPath() string {
 	return ""
 }
 
+// GetStart 返回请求参数 start (unix 时间戳, 毫秒).
 func (m *PrometheusRequest) GetStart() int64 {
 	if m != nil {
 		return m.Start
@@ -149,6 +150,7 @@ func (m *PrometheusRequest) GetStart() int64 {
 	return 0
 }
 
+// GetEnd 返回请求参数 end (unix 时间戳, 毫秒).
 func (m *PrometheusRequest) GetEnd() int64 {
 	if m != nil {
 		return m.End
@@ -156,12 +158,14 @@ func (m *PrometheusRequest) GetEnd() int64 {
 	return 0
 }
 
+// GetStep 返回请求参数 step (unix 时间戳, 毫秒).
 func (m *PrometheusRequest) GetStep() int64 {
 	if m != nil {
 		return m.Step
 	}
 	return 0
 }
+
 
 func (m *PrometheusRequest) GetTimeout() time.Duration {
 	if m != nil {
@@ -170,6 +174,7 @@ func (m *PrometheusRequest) GetTimeout() time.Duration {
 	return 0
 }
 
+// GetQuery 返回请求参数 query.
 func (m *PrometheusRequest) GetQuery() string {
 	if m != nil {
 		return m.Query
@@ -177,6 +182,7 @@ func (m *PrometheusRequest) GetQuery() string {
 	return ""
 }
 
+// GetCachingOptions 返回请求参数 cachingOptions.
 func (m *PrometheusRequest) GetCachingOptions() CachingOptions {
 	if m != nil {
 		return m.CachingOptions
@@ -253,6 +259,7 @@ func (m *PrometheusResponseHeader) GetValues() []string {
 	return nil
 }
 
+// PrometheusResponse 除了有 Prometheus 响应的基本字段外, 还会保存响应体的 Headers.
 type PrometheusResponse struct {
 	Status               string                      `protobuf:"bytes,1,opt,name=Status,proto3" json:"status"`
 	Data                 PrometheusData              `protobuf:"bytes,2,opt,name=Data,proto3" json:"data,omitempty"`

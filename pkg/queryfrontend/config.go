@@ -184,7 +184,7 @@ func NewCacheConfig(logger log.Logger, confContentYaml []byte) (*cortexcache.Con
 
 // DownstreamTripperConfig stores the http.Transport configuration for query-frontend's HTTP downstream tripper.
 type DownstreamTripperConfig struct {
-	IdleConnTimeout       prommodel.Duration `yaml:"idle_conn_timeout"`
+	IdleConnTimeout       prommodel.Duration `yaml:"idle_conn_timeout"` // 客户端连接池中 "空闲连接" 的最大保留时间, 超时将会关闭.
 	ResponseHeaderTimeout prommodel.Duration `yaml:"response_header_timeout"`
 	TLSHandshakeTimeout   prommodel.Duration `yaml:"tls_handshake_timeout"`
 	ExpectContinueTimeout prommodel.Duration `yaml:"expect_continue_timeout"`
@@ -208,7 +208,7 @@ type Config struct {
 	RequestLoggingDecision string
 	DownstreamURL          string
 	ForwardHeaders         []string
-	NumShards              int
+	NumShards              int // --query-frontend.vertical-shards
 	TenantHeader           string
 	DefaultTenant          string
 	TenantCertField        string
@@ -217,14 +217,15 @@ type Config struct {
 
 // QueryRangeConfig holds the config for query range tripperware.
 type QueryRangeConfig struct {
-	// PartialResponseStrategy is the default strategy used
-	// when parsing thanos query request.
+	// --query-range.partial-response=true
 	PartialResponseStrategy bool
 
 	ResultsCacheConfig *queryrange.ResultsCacheConfig
 	CachePathOrContent extflag.PathOrContent
 
-	AlignRangeWithStep     bool
+	// --query-range.align-range-with-step
+	AlignRangeWithStep bool
+	// --query-range.request-downsampled
 	RequestDownsampled     bool
 	SplitQueriesByInterval time.Duration
 	MinQuerySplitInterval  time.Duration
@@ -239,13 +240,18 @@ type LabelsConfig struct {
 	// PartialResponseStrategy is the default strategy used
 	// when parsing thanos query request.
 	PartialResponseStrategy bool
-	DefaultTimeRange        time.Duration
+
+	// labels.default-time-range
+	DefaultTimeRange time.Duration
 
 	ResultsCacheConfig *queryrange.ResultsCacheConfig
 	CachePathOrContent extflag.PathOrContent
 
+	// labels.split-interval
 	SplitQueriesByInterval time.Duration
-	MaxRetries             int
+
+	// labels.max-retries-per-request
+	MaxRetries int
 
 	Limits *cortexvalidation.Limits
 }

@@ -15,11 +15,14 @@ import (
 )
 
 const (
+	// 倍数关系, 表示1毫秒中有多少个纳秒
 	nanosecondsInMillisecond = int64(time.Millisecond / time.Nanosecond)
 )
 
+// TimeToMillis 将时间以 Unix 时间戳(毫秒) 形式返回.
 func TimeToMillis(t time.Time) int64 {
-	return t.UnixNano() / nanosecondsInMillisecond
+	return t.UnixMilli()
+	// return t.UnixNano() / nanosecondsInMillisecond
 }
 
 // TimeFromMillis is a helper to turn milliseconds -> time.Time
@@ -37,14 +40,16 @@ func FormatTimeModel(t model.Time) string {
 	return TimeFromMillis(int64(t)).String()
 }
 
-// ParseTime parses the string into an int64, milliseconds since epoch.
+// ParseTime 解析时间字符串, 并返回毫秒数. 时间字符串支持 RFC3339Nano 和以秒为单位的 Unix 时间戳(可带小数用于表示子秒精度).
 func ParseTime(s string) (int64, error) {
 	if t, err := strconv.ParseFloat(s, 64); err == nil {
 		s, ns := math.Modf(t)
+		// 保留三位小数.
 		ns = math.Round(ns*1000) / 1000
 		tm := time.Unix(int64(s), int64(ns*float64(time.Second)))
 		return TimeToMillis(tm), nil
 	}
+
 	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
 		return TimeToMillis(t), nil
 	}

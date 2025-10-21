@@ -206,6 +206,7 @@ func encodeVarintStats(dAtA []byte, offset int, v uint64) int {
 	dAtA[offset] = uint8(v)
 	return base
 }
+
 func (m *Stats) Size() (n int) {
 	if m == nil {
 		return 0

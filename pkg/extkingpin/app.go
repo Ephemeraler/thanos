@@ -139,6 +139,7 @@ func (a *appClause) Command(cmd, help string) AppClause {
 	}
 }
 
+// Setup 注册命令对应的启动函数.
 func (a *appClause) Setup(s SetupFunc) {
 	a.setups[a.prefix] = s
 }

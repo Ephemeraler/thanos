@@ -78,26 +78,26 @@ type Merger interface {
 
 // Request represents a query range request that can be process by middlewares.
 type Request interface {
-	// GetStart returns the start timestamp of the request in milliseconds.
+	// 返回请求参数 start 值(unix 时间戳, 毫秒).
 	GetStart() int64
-	// GetEnd returns the end timestamp of the request in milliseconds.
+	// 返回请求参数 end 值(unix 时间戳, 毫秒).
 	GetEnd() int64
-	// GetStep returns the step of the request in milliseconds.
+	// 返回请求参数 step 值(毫秒).
 	GetStep() int64
-	// GetQuery returns the query of the request.
+	// 返回请求参数 query 值.
 	GetQuery() string
-	// GetCachingOptions returns the caching options.
+	// 返回请求 cache 选项.
 	GetCachingOptions() CachingOptions
-	// WithStartEnd clone the current request with different start and end timestamp.
+	// 基于当前请求返回一个新的请求, 新请求使用参数 start 和 end. 注意是返回新请求, 不修改原请求任何值.
 	WithStartEnd(startTime int64, endTime int64) Request
-	// WithQuery clone the current request with a different query.
+	// 基于当前请求返回一个新的请求, 新请求使用参数 query. 注意是返回新请求, 不修改原请求任何值.
 	WithQuery(string) Request
 	proto.Message
 	// LogToSpan writes information about this request to an OpenTracing span
 	LogToSpan(opentracing.Span)
-	// GetStats returns the stats of the request.
+	// 返回请求参数 stats 值.
 	GetStats() string
-	// WithStats clones the current `PrometheusRequest` with a new stats.
+	// 基于当前请求返回一个新的请求, 新请求使用参数 stats. 注意是返回新请求, 不修改原请求任何值.
 	WithStats(stats string) Request
 }
 
@@ -112,7 +112,7 @@ type Response interface {
 
 type prometheusCodec struct{}
 
-// WithStartEnd clones the current `PrometheusRequest` with a new `start` and `end` timestamp.
+// WithStartEnd 基于当前请求返回新请求, 新请求中的start,end参数值为传入的参数值.
 func (q *PrometheusRequest) WithStartEnd(start int64, end int64) Request {
 	new := *q
 	new.Start = start
@@ -120,14 +120,14 @@ func (q *PrometheusRequest) WithStartEnd(start int64, end int64) Request {
 	return &new
 }
 
-// WithQuery clones the current `PrometheusRequest` with a new query.
+// WithQuery 基于当前请求返回新请求, 新请求中的query参数值为传入的参数值.
 func (q *PrometheusRequest) WithQuery(query string) Request {
 	new := *q
 	new.Query = query
 	return &new
 }
 
-// WithStats clones the current `PrometheusRequest` with a new stats.
+// WithStats 基于当前请求返回新请求, 新请求中的stats参数值为传入的参数值.
 func (q *PrometheusRequest) WithStats(stats string) Request {
 	new := *q
 	new.Stats = stats
@@ -144,29 +144,36 @@ func (q *PrometheusRequest) LogToSpan(sp opentracing.Span) {
 	)
 }
 
+// byFirstTime 主要使用响应数据中的最早数据点对响应列表进行排序.
 type byFirstTime []*PrometheusResponse
 
 func (a byFirstTime) Len() int           { return len(a) }
 func (a byFirstTime) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a byFirstTime) Less(i, j int) bool { return a[i].minTime() < a[j].minTime() }
 
+// minTime
 func (resp *PrometheusResponse) minTime() int64 {
 	result := resp.Data.Result
 	if len(result) == 0 {
 		return -1
 	}
 	if len(result[0].Samples) == 0 && len(result[0].Histograms) == 0 {
+		// 没有数据.
 		return -1
 	}
 
 	if len(result[0].Samples) == 0 {
+		// 没有样本数据, 但是有直方图数据.
 		return result[0].Histograms[0].Timestamp
 	}
 
 	if len(result[0].Histograms) == 0 {
+		// 没有直方图数据, 但是有样本数据.
 		return result[0].Samples[0].TimestampMs
 	}
 
+	// 有直方图数据和样本数据.
+	// TODO: 我不明白 prometheus 什么情况下会返回样本数据和直方图数据.
 	return minInt64(result[0].Samples[0].TimestampMs, result[0].Histograms[0].Timestamp)
 }
 
@@ -196,7 +203,7 @@ func NewEmptyPrometheusResponse() *PrometheusResponse {
 	}
 }
 
-// NewEmptyPrometheusInstantQueryResponse returns an empty successful Prometheus query range response.
+// NewEmptyPrometheusInstantQueryResponse 返回一个空响应.
 func NewEmptyPrometheusInstantQueryResponse() *PrometheusInstantQueryResponse {
 	return &PrometheusInstantQueryResponse{
 		Status: StatusSuccess,
@@ -243,21 +250,25 @@ func AnalyzesMerge(analysis ...*Analysis) *Analysis {
 	return root
 }
 
+// MergeResponse
 func (prometheusCodec) MergeResponse(_ Request, responses ...Response) (Response, error) {
+	// 判空.
 	if len(responses) == 0 {
 		return NewEmptyPrometheusResponse(), nil
 	}
 
 	promResponses := make([]*PrometheusResponse, 0, len(responses))
 	// we need to pass on all the headers for results cache gen numbers.
+	// 我们需要传递所有的请求头，用于结果缓存的生成编号.
 	var resultsCacheGenNumberHeaderValues []string
 
 	for _, res := range responses {
+		// 这里的代码也是真绝, 明确知道返回类型是 PrometheusResponse. 否则会 panic. 那还抽象干嘛. 看着都乱.
 		promResponses = append(promResponses, res.(*PrometheusResponse))
 		resultsCacheGenNumberHeaderValues = append(resultsCacheGenNumberHeaderValues, getHeaderValuesWithName(res, ResultsCacheGenNumberHeaderName)...)
 	}
 
-	// Merge the responses.
+	// 对响应列表进行排序, 按照响应中的最小时间.
 	sort.Sort(byFirstTime(promResponses))
 
 	var (
@@ -294,9 +305,13 @@ func (prometheusCodec) MergeResponse(_ Request, responses ...Response) (Response
 	return &response, nil
 }
 
+// DecodeRequest 根据 http.Request 构建 prometheusReuqest.
+// forwardHeaders 用于筛选 http.Request 中哪些 header 将被使用.
 func (prometheusCodec) DecodeRequest(_ context.Context, r *http.Request, forwardHeaders []string) (Request, error) {
 	var result PrometheusRequest
 	var err error
+
+	// 从请求中解析 start, end 和 step 参数. 并对参数有效性进行验证.
 	result.Start, err = util.ParseTime(r.FormValue("start"))
 	if err != nil {
 		return nil, decorateWithParamName(err, "start")
@@ -320,27 +335,35 @@ func (prometheusCodec) DecodeRequest(_ context.Context, r *http.Request, forward
 		return nil, errNegativeStep
 	}
 
-	// For safety, limit the number of returned points per timeseries.
-	// This is sufficient for 60s resolution for a week or 1h resolution for a year.
+	// 这里是限制每个时间序列返回的样本数. 该限制足以支持一周内每60秒一个时间点, 或一年内每1小时一个时间点.
 	if (result.End-result.Start)/result.Step > 11000 {
 		return nil, errStepTooSmall
 	}
 
+	// 从请求中获取 query
 	result.Query = r.FormValue("query")
+
+	// TODO 请求中的 stats 参数有什么用. prometheus 无该参数, thanos 提供该参数用于响应查询统计信息.
 	result.Stats = r.FormValue("stats")
 	result.Path = r.URL.Path
+
+	// 这块应该是写重复了.
 	result.Stats = r.FormValue("stats")
 
-	// Include the specified headers from http request in prometheusRequest.
+	// forwardHeaders 筛选 http.request 中哪些 header 将被使用.
 	for _, header := range forwardHeaders {
 		for h, hv := range r.Header {
 			if strings.EqualFold(h, header) {
 				result.Headers = append(result.Headers, &PrometheusRequestHeader{Name: h, Values: hv})
+				// 防止重复添加 header. 本质上来说, 在 Golang 中, http.Request.Header 中是不会存在相同的 header 的.(大小写无关)
+				// 但是我没有试过 utf-8 编码的 header 是否会重复.
+				// 如果按照我所述, 其实都不需比较了. 直接http.Request.Header.Get(header) 就行了.
 				break
 			}
 		}
 	}
 
+	// 设置 cache 选项. 默认是开启. 这块用的disable, 默认值为false. 所以是默认开启 cache.
 	for _, value := range r.Header.Values(cacheControlHeader) {
 		if strings.Contains(value, noStoreValue) {
 			result.CachingOptions.Disabled = true
@@ -351,6 +374,8 @@ func (prometheusCodec) DecodeRequest(_ context.Context, r *http.Request, forward
 	return &result, nil
 }
 
+// EncodeRequest 将 prometheusRequest 转换为 http.Request. 注意若 Request 不是 prometheusRequest 类型, 则返回错误.
+// 参数 ctx 用于替换 http.Request.Context().
 func (prometheusCodec) EncodeRequest(ctx context.Context, r Request) (*http.Request, error) {
 	promReq, ok := r.(*PrometheusRequest)
 	if !ok {
@@ -369,15 +394,18 @@ func (prometheusCodec) EncodeRequest(ctx context.Context, r Request) (*http.Requ
 	}
 	var h = http.Header{}
 
+	// 处理 headers.
 	for _, hv := range promReq.Headers {
 		for _, v := range hv.Values {
+			// 这需要用 Add, 因为可能会有多个相同的 header.
+			// 如果用 Set, 则会覆盖掉之前的值.
 			h.Add(hv.Name, v)
 		}
 	}
 
 	req := &http.Request{
 		Method:     "GET",
-		RequestURI: u.String(), // This is what the httpgrpc code looks at.
+		RequestURI: u.String(), // httpgrpc 使用这个,用于判断路由和提取参数等.
 		URL:        u,
 		Body:       http.NoBody,
 		Header:     h,
@@ -386,7 +414,9 @@ func (prometheusCodec) EncodeRequest(ctx context.Context, r Request) (*http.Requ
 	return req.WithContext(ctx), nil
 }
 
+// DecodeResponse 将 http.Response 转换为 prometheusResponse.
 func (prometheusCodec) DecodeResponse(ctx context.Context, r *http.Response, _ Request) (Response, error) {
+	// 判断响应码.
 	if r.StatusCode/100 != 2 {
 		body, _ := io.ReadAll(r.Body)
 		return nil, httpgrpc.Errorf(r.StatusCode, "%s", string(body))
@@ -394,6 +424,7 @@ func (prometheusCodec) DecodeResponse(ctx context.Context, r *http.Response, _ R
 	log, ctx := spanlogger.New(ctx, "ParseQueryRangeResponse") //nolint:ineffassign,staticcheck
 	defer log.Finish()
 
+	// 读取响应体.
 	buf, err := BodyBuffer(r)
 	if err != nil {
 		log.Error(err)
@@ -401,11 +432,14 @@ func (prometheusCodec) DecodeResponse(ctx context.Context, r *http.Response, _ R
 	}
 	log.LogFields(otlog.Int("bytes", len(buf)))
 
+	// JSON 解码.
 	var resp PrometheusResponse
 	if err := json.Unmarshal(buf, &resp); err != nil {
 		return nil, httpgrpc.Errorf(http.StatusInternalServerError, "error decoding response: %v", err)
 	}
 
+	// 将 http.Response.Header 中的 header 转换为 PrometheusResponseHeader.
+	// 并写入 PrometheusResponse.Headers 中.
 	for h, hv := range r.Header {
 		resp.Headers = append(resp.Headers, &PrometheusResponseHeader{Name: h, Values: hv})
 	}
@@ -418,16 +452,15 @@ type Buffer interface {
 	Bytes() []byte
 }
 
+// BodyBuffer 从 http.Response.Body 中读取数据, 并返回一个字节数组. 该方法会将数据全部读取到内存中.
 func BodyBuffer(res *http.Response) ([]byte, error) {
-	// Attempt to cast the response body to a Buffer and use it if possible.
-	// This is because the frontend may have already read the body and buffered it.
+	// 尝试断言是否为 Buffer 类型. 这种设计允许提前读取并缓存过的响应体直接复用，避免重复读取 IO 流.
+	// 这里也就意味着可能 res.Body 已经被处理过了, 变成了 Buffer 类型.
 	if buffer, ok := res.Body.(Buffer); ok {
 		return buffer.Bytes(), nil
 	}
-	// Preallocate the buffer with the exact size so we don't waste allocations
-	// while progressively growing an initial small buffer. The buffer capacity
-	// is increased by MinRead to avoid extra allocations due to how ReadFrom()
-	// internally works.
+
+	// 这里 res.ContentLength+bytes.MinRead 是一个技巧, 尽可能的避免 buf在 ReadFrom时频繁扩容.
 	buf := bytes.NewBuffer(make([]byte, 0, res.ContentLength+bytes.MinRead))
 	if _, err := buf.ReadFrom(res.Body); err != nil {
 		return nil, httpgrpc.Errorf(http.StatusInternalServerError, "error decoding response: %v", err)
@@ -435,6 +468,7 @@ func BodyBuffer(res *http.Response) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// EncodeResponse 将 prometheusResponse 转换为 http.Response. 注意若 Response 不是 prometheusResponse 类型, 则返回错误.
 func (prometheusCodec) EncodeResponse(ctx context.Context, res Response) (*http.Response, error) {
 	sp, _ := opentracing.StartSpanFromContext(ctx, "APIResponse.ToHTTPResponse")
 	defer sp.Finish()
@@ -463,9 +497,11 @@ func (prometheusCodec) EncodeResponse(ctx context.Context, res Response) (*http.
 }
 
 // PrometheusResponseHeader helps preserve the Header from the original Prometheus response, coming from the Tripperware.
+// mergeHeaders 将 PrometheusResponseHeader 转换为 http.Header.
 func mergeHeaders(headers []*PrometheusResponseHeader) http.Header {
 	h := make(http.Header, len(headers)+1)
 	for _, header := range headers {
+		// TODO 我不理解的是为什么要将 Content-Type 过滤掉. 也许是因为 thanos 将数据以 JSON 重新组织.
 		if strings.EqualFold("Content-Type", header.Name) {
 			continue
 		}
@@ -819,16 +855,16 @@ func matrixMerge(resps []*PrometheusResponse) []SampleStream {
 	return result
 }
 
-// SliceSamples assumes given samples are sorted by timestamp in ascending order and
-// return a sub slice whose first element's is the smallest timestamp that is strictly
-// bigger than the given minTs. Empty slice is returned if minTs is bigger than all the
-// timestamps in samples.
+// SliceSamples 假设传入的 samples 中按时间升序排列, 该函数返回samples子切片, 子切片中第一个元素的时间戳严格大于给定的 minTs.
+// 如果 minTs 大于 samples 中所有时间戳, 则返回空切片.
 func SliceSamples(samples []cortexpb.Sample, minTs int64) []cortexpb.Sample {
 	if len(samples) <= 0 || minTs < samples[0].TimestampMs {
+		// samples 中无数据 或者 minTs 时间在 samples[0] 时间戳之前.
 		return samples
 	}
 
 	if len(samples) > 0 && minTs > samples[len(samples)-1].TimestampMs {
+		// samples 中有数据且 minTs 在 samples 中所有数据之后.
 		return samples[len(samples):]
 	}
 
@@ -859,8 +895,11 @@ func SliceHistogram(histograms []SampleHistogramPair, minTs int64) []SampleHisto
 	return histograms[searchResult:]
 }
 
+// parseDurationMs 解析 `duration` 字符串或秒字符串, 并返回毫秒
+// 重复编写 /pkg/queryfrontend/queryrange_codec.go 中的 parseDurationMs 函数.
 func parseDurationMs(s string) (int64, error) {
 	if d, err := strconv.ParseFloat(s, 64); err == nil {
+		// 转换成毫秒
 		ts := d * float64(time.Second/time.Millisecond)
 		if ts > float64(math.MaxInt64) || ts < float64(math.MinInt64) {
 			return 0, httpgrpc.Errorf(http.StatusBadRequest, "cannot parse %q to a valid duration. It overflows int64", s)

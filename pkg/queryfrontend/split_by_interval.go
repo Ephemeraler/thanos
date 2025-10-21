@@ -36,9 +36,10 @@ func SplitByIntervalMiddleware(interval queryrange.IntervalFn, limits queryrange
 }
 
 type splitByInterval struct {
-	next     queryrange.Handler
-	limits   queryrange.Limits
-	merger   queryrange.Merger
+	next   queryrange.Handler
+	limits queryrange.Limits
+	merger queryrange.Merger
+	// 子请求时间窗口
 	interval queryrange.IntervalFn
 
 	// Metrics.
@@ -48,22 +49,25 @@ type splitByInterval struct {
 func (s splitByInterval) Do(ctx context.Context, r queryrange.Request) (queryrange.Response, error) {
 	// First we're going to build new requests, one for each day, taking care
 	// to line up the boundaries with step.
+
+	// 子请求列表
 	reqs, err := splitQuery(r, s.interval(r))
 	if err != nil {
 		return nil, err
 	}
 	s.splitByCounter.Add(float64(len(reqs)))
 
+	// 执行子请求
 	reqResps, err := queryrange.DoRequests(ctx, s.next, reqs, s.limits)
 	if err != nil {
 		return nil, err
 	}
 
+	// 子响应列表及合并
 	resps := make([]queryrange.Response, 0, len(reqResps))
 	for _, reqResp := range reqResps {
 		resps = append(resps, reqResp.Response)
 	}
-
 	response, err := s.merger.MergeResponse(r, resps...)
 	if err != nil {
 		return nil, err
@@ -71,9 +75,11 @@ func (s splitByInterval) Do(ctx context.Context, r queryrange.Request) (queryran
 	return response, nil
 }
 
+// splitQuery 将请求以时间窗口(interval)划分为多个子请求, 并返回子请求列表.
 func splitQuery(r queryrange.Request, interval time.Duration) ([]queryrange.Request, error) {
 	var reqs []queryrange.Request
 
+	// TODO: 这里有一点我有点晕, ThanosQueryRangeRequest 也是 SplitRequest 呀.
 	switch tr := r.(type) {
 	case *ThanosQueryRangeRequest:
 		// Replace @ modifier function to their respective constant values in the query.
@@ -95,6 +101,7 @@ func splitQuery(r queryrange.Request, interval time.Duration) ([]queryrange.Requ
 			}
 		}
 	case SplitRequest:
+		// 将时间窗口转换为毫秒值
 		dur := int64(interval / time.Millisecond)
 		for start := r.GetStart(); start < r.GetEnd(); start = start + dur {
 			end := start + dur

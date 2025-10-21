@@ -39,14 +39,15 @@ type Analyzer interface {
 type QueryAnalyzer struct{}
 
 type CachedQueryAnalyzer struct {
+	// 分析器
 	analyzer *QueryAnalyzer
-	cache    *lru.Cache[string, cachedValue]
+	// cache 用于保存最近分析过的 query 语句. key 为 query, value 为分析结果.
+	cache *lru.Cache[string, cachedValue]
 }
 
 // NewQueryAnalyzer creates a new QueryAnalyzer.
 func NewQueryAnalyzer() *CachedQueryAnalyzer {
-	// Ignore the error check since it throws error
-	// only if size is <= 0.
+	// 这块没有错误判断是因为只有 size <= 0 才会报错.
 	cache, _ := lru.New[string, cachedValue](256)
 	return &CachedQueryAnalyzer{
 		analyzer: &QueryAnalyzer{},
@@ -60,6 +61,7 @@ type cachedValue struct {
 }
 
 func (a *CachedQueryAnalyzer) Analyze(query string) (QueryAnalysis, error) {
+	// cache 作用
 	if a.cache.Contains(query) {
 		value, ok := a.cache.Get(query)
 		if ok {
@@ -67,10 +69,10 @@ func (a *CachedQueryAnalyzer) Analyze(query string) (QueryAnalysis, error) {
 		}
 	}
 
-	// Analyze if needed.
+	// 分析
 	analysis, err := a.analyzer.Analyze(query)
 
-	// Adding to cache.
+	// 结果 cache
 	_ = a.cache.Add(query, cachedValue{QueryAnalysis: analysis, err: err})
 
 	return analysis, err

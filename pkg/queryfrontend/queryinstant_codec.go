@@ -28,12 +28,13 @@ import (
 	"github.com/thanos-io/thanos/pkg/extpromql"
 )
 
-// queryInstantCodec is used to encode/decode Thanos instant query requests and responses.
+// queryInstantCodec Instant Query 请求响应编解码器, 用于  与 http.Request/http.Response 之间进行编解码.
+// Instant Query 请求包括 /api/v1/query.
 type queryInstantCodec struct {
-	partialResponse bool
+	partialResponse bool // 对应 query-range.partial-response  命令行参数, 默认值: true
 }
 
-// NewThanosQueryInstantCodec initializes a queryInstantCodec.
+// NewThanosQueryInstantCodec 创建 queryInstantCodec 实例.
 func NewThanosQueryInstantCodec(partialResponse bool) *queryInstantCodec {
 	return &queryInstantCodec{
 		partialResponse: partialResponse,
@@ -43,13 +44,16 @@ func NewThanosQueryInstantCodec(partialResponse bool) *queryInstantCodec {
 // MergeResponse merges multiple responses into a single response. For instant query
 // only vector and matrix responses will be merged because other types of queries
 // are not shardable like number literal, string literal, scalar, etc.
+// 当前只会合并 matrix, vector 类型的响应, 其他类型的响应不会合并.
 func (c queryInstantCodec) MergeResponse(req queryrange.Request, responses ...queryrange.Response) (queryrange.Response, error) {
+	// responses 为空和唯一都不需要合并, 直接返回即可.
 	if len(responses) == 0 {
 		return queryrange.NewEmptyPrometheusInstantQueryResponse(), nil
 	} else if len(responses) == 1 {
 		return responses[0], nil
 	}
 
+	// 先将 response 转换成 PrometheusInstantQueryResponse.
 	promResponses := make([]*queryrange.PrometheusInstantQueryResponse, 0, len(responses))
 	for _, resp := range responses {
 		promResponses = append(promResponses, resp.(*queryrange.PrometheusInstantQueryResponse))
@@ -65,6 +69,8 @@ func (c queryInstantCodec) MergeResponse(req queryrange.Request, responses ...qu
 	}
 
 	var res queryrange.Response
+	// [?]: 为什么只判断第一个 response 的类型?
+	// [可能性推测] 首先, 合并结果是合并来自不同源, 相同查询语句的结果. 所以尽管有多个响应, 但是响应类型应该是唯一的.
 	switch promResponses[0].Data.ResultType {
 	case model.ValMatrix.String():
 		res = &queryrange.PrometheusInstantQueryResponse{
@@ -103,11 +109,14 @@ func (c queryInstantCodec) MergeResponse(req queryrange.Request, responses ...qu
 	return res, nil
 }
 
+// DecodeRequest 将 http.Request(r) 解码为 ThanosQueryInstantRequest.
 func (c queryInstantCodec) DecodeRequest(_ context.Context, r *http.Request, forwardHeaders []string) (queryrange.Request, error) {
 	var (
+		// Thanos Query Instant API 支持的参数
 		result ThanosQueryInstantRequest
 		err    error
 	)
+
 	if len(r.FormValue("time")) > 0 {
 		result.Time, err = cortexutil.ParseTime(r.FormValue("time"))
 		if err != nil {
@@ -142,6 +151,8 @@ func (c queryInstantCodec) DecodeRequest(_ context.Context, r *http.Request, for
 		return nil, err
 	}
 
+	// 这个代码写的我还挺疑惑的, 为什么要判断是不是为空? 本来 result.ReplicaLabels 就是[]string, 直接赋值不行吗?
+	// 不行, 如果参数没传, r.Form[queryv1.ReplicaLabelsParam] 就是 nil
 	if len(r.Form[queryv1.ReplicaLabelsParam]) > 0 {
 		result.ReplicaLabels = r.Form[queryv1.ReplicaLabelsParam]
 	}
@@ -178,6 +189,7 @@ func (c queryInstantCodec) DecodeRequest(_ context.Context, r *http.Request, for
 	return &result, nil
 }
 
+// EncodeRequest 将 ThanosQueryInstantRequest 转换成 http.Request, 并使用 ctx 作为 http.Request.Context.
 func (c queryInstantCodec) EncodeRequest(ctx context.Context, r queryrange.Request) (*http.Request, error) {
 	thanosReq, ok := r.(*ThanosQueryInstantRequest)
 	if !ok {
@@ -233,6 +245,7 @@ func (c queryInstantCodec) EncodeRequest(ctx context.Context, r queryrange.Reque
 	return req.WithContext(ctx), nil
 }
 
+// EncodeResponse 将 PrometheusInstantQueryResponse 转换成 http.Response, 同时将响应体头也写入 http.Response.
 func (c queryInstantCodec) EncodeResponse(ctx context.Context, res queryrange.Response) (*http.Response, error) {
 	sp, _ := opentracing.StartSpanFromContext(ctx, "APIResponse.ToHTTPResponse")
 	defer sp.Finish()
@@ -246,7 +259,6 @@ func (c queryInstantCodec) EncodeResponse(ctx context.Context, res queryrange.Re
 	if err != nil {
 		return nil, httpgrpc.Errorf(http.StatusInternalServerError, "error encoding response: %v", err)
 	}
-
 	sp.LogFields(otlog.Int("bytes", len(b)))
 
 	resp := http.Response{
@@ -260,7 +272,9 @@ func (c queryInstantCodec) EncodeResponse(ctx context.Context, res queryrange.Re
 	return &resp, nil
 }
 
+// DecodeResponse 将 http.Response 转换成 PrometheusInstantQueryResponse, 同时将响应体头也写入 PrometheusInstantQueryResponse.
 func (c queryInstantCodec) DecodeResponse(ctx context.Context, r *http.Response, req queryrange.Request) (queryrange.Response, error) {
+	// 响应码校验.
 	if r.StatusCode/100 != 2 {
 		body, _ := io.ReadAll(r.Body)
 		return nil, httpgrpc.ErrorFromHTTPResponse(&httpgrpc.HTTPResponse{
@@ -271,6 +285,7 @@ func (c queryInstantCodec) DecodeResponse(ctx context.Context, r *http.Response,
 	log, ctx := spanlogger.New(ctx, "ParseQueryInstantResponse") //nolint:ineffassign,staticcheck
 	defer log.Finish()
 
+	// 读取响应体内容
 	buf, err := queryrange.BodyBuffer(r)
 	if err != nil {
 		log.Error(err) //nolint:errcheck
@@ -278,20 +293,24 @@ func (c queryInstantCodec) DecodeResponse(ctx context.Context, r *http.Response,
 	}
 	log.LogFields(otlog.Int("bytes", len(buf)))
 
+	// 将响应体解析到 queryrange.PrometheusInstantQueryResponse
 	var resp queryrange.PrometheusInstantQueryResponse
 	if err := json.Unmarshal(buf, &resp); err != nil {
 		return nil, httpgrpc.Errorf(http.StatusInternalServerError, "error decoding response: %v", err)
 	}
 
+	// 将响应体头写入到 queryrange.PrometheusInstantQueryResponse.Headers
 	for h, hv := range r.Header {
 		resp.Headers = append(resp.Headers, &queryrange.PrometheusResponseHeader{Name: h, Values: hv})
 	}
 	return &resp, nil
 }
 
+// vectorMerge
 func vectorMerge(req queryrange.Request, resps []*queryrange.PrometheusInstantQueryResponse) (*queryrange.Vector, error) {
 	output := map[string]*queryrange.Sample{}
 	metrics := []string{} // Used to preserve the order for topk and bottomk.
+	// [?] 不知道在干什么.
 	sortPlan, err := sortPlanForQuery(req.GetQuery())
 	if err != nil {
 		return nil, err
@@ -375,6 +394,7 @@ const (
 	sortByLabels     sortPlan = 3
 )
 
+// sortPlanForQuery
 func sortPlanForQuery(q string) (sortPlan, error) {
 	expr, err := extpromql.ParseExpr(q)
 	if err != nil {
@@ -425,6 +445,7 @@ func sortPlanForQuery(q string) (sortPlan, error) {
 	return sortByLabels, nil
 }
 
+// matrixMerge 合并 PrometheusInstantQueryResponse 中的 matrix 结果.
 func matrixMerge(resps []*queryrange.PrometheusInstantQueryResponse) *queryrange.Matrix {
 	output := map[string]*queryrange.SampleStream{}
 	for _, resp := range resps {
@@ -437,6 +458,7 @@ func matrixMerge(resps []*queryrange.PrometheusInstantQueryResponse) *queryrange
 			continue
 		}
 		for _, stream := range resp.Data.Result.GetMatrix().SampleStreams {
+			// [?] 这个应该不只是metric, 还应该包含 labels? 应该是作为唯一标识使用.
 			metric := cortexpb.FromLabelAdaptersToLabels(stream.Labels).String()
 			existing, ok := output[metric]
 			if !ok {
@@ -446,17 +468,22 @@ func matrixMerge(resps []*queryrange.PrometheusInstantQueryResponse) *queryrange
 			}
 			// We need to make sure we don't repeat samples. This causes some visualizations to be broken in Grafana.
 			// The prometheus API is inclusive of start and end timestamps.
+			// stream 合并到 existing 中.
 			if len(existing.Samples) > 0 && len(stream.Samples) > 0 {
+				// 获取 existing 中最晚时间.
 				existingEndTs := existing.Samples[len(existing.Samples)-1].TimestampMs
 				if existingEndTs == stream.Samples[0].TimestampMs {
-					// Typically this the cases where only 1 sample point overlap,
-					// so optimize with simple code.
+					// existing 最晚时间 == stream 最早时间, 只有一个点重叠.
+					// [v] 这块不会 panic 吗? 当 stream.Samples 只有 1 个元素的时候?
+					// 不会, 因为 len() > 0 确保切片中至少有1个元素. 而 [1:] 是合法的.
 					stream.Samples = stream.Samples[1:]
 				} else if existingEndTs > stream.Samples[0].TimestampMs {
-					// Overlap might be big, use heavier algorithm to remove overlap.
+					// 如果 existing 最晚时间 > stream 最早时间, 说明有重叠. 重叠范围不好确定.
 					stream.Samples = queryrange.SliceSamples(stream.Samples, existingEndTs)
 				} // else there is no overlap, yay!
 			}
+			// 将非重叠数据合并到 existing 中.
+			// [?] 那这里会不会存在 下一个 stream 在 existing 中间的范围, 而这个中间正好为空间隔
 			existing.Samples = append(existing.Samples, stream.Samples...)
 			output[metric] = existing
 		}

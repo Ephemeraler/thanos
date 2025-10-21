@@ -35,13 +35,18 @@ import (
 )
 
 // Standard downsampling resolution levels in Thanos.
+// Thanos Compact Downsampling 的标准间隔.
 const (
-	ResLevel0 = int64(0)              // Raw data.
-	ResLevel1 = int64(5 * 60 * 1000)  // 5 minutes in milliseconds.
-	ResLevel2 = int64(60 * 60 * 1000) // 1 hour in milliseconds.
+	// Raw data.
+	ResLevel0 = int64(0)
+	// 5分钟
+	ResLevel1 = int64(5 * 60 * 1000)
+	// 1小时
+	ResLevel2 = int64(60 * 60 * 1000)
 )
 
 // Downsampling ranges i.e. minimum block size after which we start to downsample blocks (in seconds).
+// TODO 这块好像是触发 downsampling 执行的阈值.
 const (
 	ResLevel1DownsampleRange = 40 * 60 * 60 * 1000      // 40 hours.
 	ResLevel2DownsampleRange = 10 * 24 * 60 * 60 * 1000 // 10 days.

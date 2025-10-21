@@ -40,13 +40,14 @@ var (
 	errCannotParse    = "cannot parse parameter %s"
 )
 
-// queryRangeCodec is used to encode/decode Thanos query range requests and responses.
+// queryRangeCodec 用于编码/解码 Thanos 查询范围请求和响应.
 type queryRangeCodec struct {
 	queryrange.Codec
+	// 对应参数 --query-range.partial-response
 	partialResponse bool
 }
 
-// NewThanosQueryRangeCodec initializes a queryRangeCodec.
+// NewThanosQueryRangeCodec 返回 QueryRangeCodec.
 func NewThanosQueryRangeCodec(partialResponse bool) *queryRangeCodec {
 	return &queryRangeCodec{
 		Codec:           queryrange.PrometheusCodec,
@@ -54,6 +55,7 @@ func NewThanosQueryRangeCodec(partialResponse bool) *queryRangeCodec {
 	}
 }
 
+// DecodeRequest 解析 http.Request, 返回 ThanosQueryRangeRequest.
 func (c queryRangeCodec) DecodeRequest(_ context.Context, r *http.Request, forwardHeaders []string) (queryrange.Request, error) {
 	var (
 		result ThanosQueryRangeRequest
@@ -82,8 +84,6 @@ func (c queryRangeCodec) DecodeRequest(_ context.Context, r *http.Request, forwa
 		return nil, errNegativeStep
 	}
 
-	// For safety, limit the number of returned points per timeseries.
-	// This is sufficient for 60s resolution for a week or 1h resolution for a year.
 	if (result.End-result.Start)/result.Step > 11000 {
 		return nil, errStepTooSmall
 	}
@@ -94,15 +94,18 @@ func (c queryRangeCodec) DecodeRequest(_ context.Context, r *http.Request, forwa
 	}
 
 	if r.FormValue(queryv1.MaxSourceResolutionParam) == "auto" {
+		// 自动降采样时, 设置原始数据最大分辨率为 step 的 1/5.
 		result.AutoDownsampling = true
 		result.MaxSourceResolution = result.Step / 5
 	} else {
+		// 否则设置自定义原始数据最大分辨率
 		result.MaxSourceResolution, err = parseDownsamplingParamMillis(r.FormValue(queryv1.MaxSourceResolutionParam))
 		if err != nil {
 			return nil, err
 		}
 	}
 
+	// 处理partial_response 默认参数与请求参数值. 当请求值设置正确时优先使用请求值.
 	result.PartialResponse, err = parsePartialResponseParam(r.FormValue(queryv1.PartialResponseParam), c.partialResponse)
 	if err != nil {
 		return nil, err
@@ -156,6 +159,7 @@ func (c queryRangeCodec) DecodeRequest(_ context.Context, r *http.Request, forwa
 	return &result, nil
 }
 
+// EncodeRequest 将 ThanosQueryRangeRequest 编码为 http.Request.
 func (c queryRangeCodec) EncodeRequest(ctx context.Context, r queryrange.Request) (*http.Request, error) {
 	thanosReq, ok := r.(*ThanosQueryRangeRequest)
 	if !ok {
@@ -211,6 +215,7 @@ func (c queryRangeCodec) EncodeRequest(ctx context.Context, r queryrange.Request
 	return req.WithContext(ctx), nil
 }
 
+// parseDurationMillis 解析 duration 或 float, 并返回毫秒.
 func parseDurationMillis(s string) (int64, error) {
 	if d, err := strconv.ParseFloat(s, 64); err == nil {
 		ts := d * float64(time.Second/time.Millisecond)
@@ -225,6 +230,7 @@ func parseDurationMillis(s string) (int64, error) {
 	return 0, httpgrpc.Errorf(http.StatusBadRequest, "cannot parse %q to a valid duration", s)
 }
 
+// parseEnabkeDedupParam 解析 s 并返回 bool 类型, 当 s 为空或解析错误时, 默认返回 true.
 func parseEnableDedupParam(s string) (bool, error) {
 	enableDeduplication := true // Deduplication is enabled by default.
 	if s != "" {
@@ -238,6 +244,7 @@ func parseEnableDedupParam(s string) (bool, error) {
 	return enableDeduplication, nil
 }
 
+// parseDownsamplingParamMillis 解析 duration 或 秒字符串, 以整型格式返回毫秒.
 func parseDownsamplingParamMillis(s string) (int64, error) {
 	var maxSourceResolution int64
 	if s != "" {
@@ -255,6 +262,7 @@ func parseDownsamplingParamMillis(s string) (int64, error) {
 	return maxSourceResolution, nil
 }
 
+// parsePartialResponseParam 解析 s 并返回 bool 类型, 当 s 为空或解析错误时, 返回参数 defaultEnablePartialResponse.
 func parsePartialResponseParam(s string, defaultEnablePartialResponse bool) (bool, error) {
 	if s != "" {
 		var err error
@@ -302,11 +310,13 @@ func parseShardInfo(ss url.Values, key string) (*storepb.ShardInfo, error) {
 	return &info, nil
 }
 
+// encodeTime 将时间毫秒值转换成 Unix 时间戳字符串(可带小数用于表示子秒精度)
 func encodeTime(t int64) string {
 	f := float64(t) / 1.0e3
 	return strconv.FormatFloat(f, 'f', -1, 64)
 }
 
+// encodeDurationMillis 将毫秒时间戳转换为unix_timestamp(秒.亚秒).
 func encodeDurationMillis(d int64) string {
 	return strconv.FormatFloat(float64(d)/float64(time.Second/time.Millisecond), 'f', -1, 64)
 }

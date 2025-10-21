@@ -22,8 +22,7 @@ func ContextWithEmptyStats(ctx context.Context) (*Stats, context.Context) {
 	return stats, ctx
 }
 
-// FromContext gets the Stats out of the Context. Returns nil if stats have not
-// been initialised in the context.
+// FromContext 从 Context 中获取 Stats, 如果没有则返回 nil.
 func FromContext(ctx context.Context) *Stats {
 	o := ctx.Value(ctxKey)
 	if o == nil {
@@ -89,6 +88,7 @@ func (s *Stats) LoadFetchedChunkBytes() uint64 {
 	return atomic.LoadUint64(&s.FetchedChunkBytes)
 }
 
+// SetPeakSamples 原子设置 PeakLoadedSamples 的值.
 func (s *Stats) SetPeakSamples(peakSamples int32) {
 	if s == nil {
 		return
@@ -97,11 +97,11 @@ func (s *Stats) SetPeakSamples(peakSamples int32) {
 	atomic.StoreInt32(&s.PeakLoadedSamples, peakSamples)
 }
 
+// LoadPeakSamples 原子读取 PeakLoadedSamples 的值并返回.
 func (s *Stats) LoadPeakSamples() int32 {
 	if s == nil {
 		return 0
 	}
-
 	return atomic.LoadInt32(&s.PeakLoadedSamples)
 }
 

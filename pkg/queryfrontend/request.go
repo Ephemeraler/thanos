@@ -44,15 +44,20 @@ type ThanosRequestDedup interface {
 }
 
 type ThanosQueryRangeRequest struct {
-	Path                string
-	Start               int64
-	End                 int64
-	Step                int64
-	Timeout             time.Duration
-	Query               string
-	Dedup               bool
-	PartialResponse     bool
-	AutoDownsampling    bool
+	Path    string
+	Start   int64
+	End     int64
+	Step    int64
+	Timeout time.Duration
+	Query   string
+	// 默认为 true.
+	Dedup            bool
+	PartialResponse  bool
+	AutoDownsampling bool
+	// 参数 max_source_resolution 控制请求获取原始数据的最大分辨率.
+	// 请求参数中我发现这个参数了, 该参数可取值 ["auto", "0s", "5m", "1h"]
+	// 当请求参数设置为 auto 时, 默认该值会设置成 step / 5.
+	// 如果请求传参是其他值呢?
 	MaxSourceResolution int64
 	ReplicaLabels       []string
 	StoreMatchers       [][]*labels.Matcher
@@ -158,13 +163,17 @@ func (r *ThanosQueryRangeRequest) String() string { return "" }
 func (r *ThanosQueryRangeRequest) ProtoMessage() {}
 
 type ThanosQueryInstantRequest struct {
-	Path                string
-	Time                int64
-	Timeout             time.Duration
-	Query               string
-	Dedup               bool
-	PartialResponse     bool
-	AutoDownsampling    bool
+	Path string
+	// unix timestamp in milliseconds.
+	Time    int64
+	Timeout time.Duration
+	Query   string
+	// dedup 默认为 true.
+	Dedup           bool
+	PartialResponse bool
+	// 当 MaxSourceResolution 设置为 auto 时, AutoDownsampling 会被设置为 true.
+	AutoDownsampling bool
+	// 毫秒级别的时间.
 	MaxSourceResolution int64
 	ReplicaLabels       []string
 	StoreMatchers       [][]*labels.Matcher
@@ -172,8 +181,9 @@ type ThanosQueryInstantRequest struct {
 	Stats               string
 	ShardInfo           *storepb.ShardInfo
 	LookbackDelta       int64 // in milliseconds.
-	Analyze             bool
-	Engine              string
+	// Analyze 默认为 false.
+	Analyze bool
+	Engine  string
 }
 
 // IsDedupEnabled returns true if deduplication is enabled.

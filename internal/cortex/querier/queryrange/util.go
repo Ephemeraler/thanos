@@ -21,6 +21,7 @@ type RequestResponse struct {
 
 // DoRequests executes a list of requests in parallel. The limits parameters is used to limit parallelism per single request.
 func DoRequests(ctx context.Context, downstream Handler, reqs []Request, limits Limits) ([]RequestResponse, error) {
+	// 提取了租户信息
 	tenantIDs, err := tenant.TenantIDs(ctx)
 	if err != nil {
 		return nil, httpgrpc.Errorf(http.StatusBadRequest, "%s", err.Error())
@@ -31,11 +32,13 @@ func DoRequests(ctx context.Context, downstream Handler, reqs []Request, limits 
 	defer cancel()
 
 	// Feed all requests to a bounded intermediate channel to limit parallelism.
+	// 请求缓冲池/任务队列
 	intermediate := make(chan Request)
 	go func() {
 		for _, req := range reqs {
 			intermediate <- req
 		}
+		// 这里不需要等待最后一个请求执行完毕再关闭吗?
 		close(intermediate)
 	}()
 

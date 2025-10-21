@@ -10,7 +10,7 @@ import (
 	"github.com/thanos-io/thanos/pkg/compact/downsample"
 )
 
-// thanosCacheKeyGenerator is a utility for using split interval when determining cache keys.
+// thanosCacheKeyGenerator 是一个用于在确定缓存键时使用分割时间区间(split interval)的工具.
 type thanosCacheKeyGenerator struct {
 	resolutions []int64
 }
@@ -21,8 +21,8 @@ func newThanosCacheKeyGenerator() thanosCacheKeyGenerator {
 	}
 }
 
-// GenerateCacheKey generates a cache key based on the Request and interval.
-// TODO(yeya24): Add other request params as request key.
+// GenerateCacheKey 根据请求(Request)和时间区间(interval)生成一个缓存键.
+// TODO(yeya24): 添加其他请求参数作为缓存键的一部分.
 func (t thanosCacheKeyGenerator) GenerateCacheKey(userID string, r queryrange.Request) string {
 	if sr, ok := r.(SplitRequest); ok {
 		splitInterval := sr.GetSplitInterval().Milliseconds()

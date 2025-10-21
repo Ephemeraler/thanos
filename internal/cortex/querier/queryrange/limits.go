@@ -55,13 +55,13 @@ func (l limitsMiddleware) Do(ctx context.Context, r Request) (Response, error) {
 	log, ctx := spanlogger.New(ctx, "limits")
 	defer log.Finish()
 
+	// TODO 这有一个问题啊, 如果没有拿到租户id, 这块会报错. 那thanos默认给增加租户id了?
 	tenantIDs, err := tenant.TenantIDs(ctx)
 	if err != nil {
 		return nil, httpgrpc.Errorf(http.StatusBadRequest, "%s", err.Error())
 	}
 
 	// Clamp the time range based on the max query lookback.
-
 	if maxQueryLookback := validation.SmallestPositiveNonZeroDurationPerTenant(tenantIDs, l.MaxQueryLookback); maxQueryLookback > 0 {
 		minStartTime := util.TimeToMillis(time.Now().Add(-maxQueryLookback))
 

@@ -52,6 +52,7 @@ func (q *QueryAnalysis) scopeToLabels(labels []string, by bool) QueryAnalysis {
 	}
 }
 
+// IsShardable 表示是否可垂直分片
 func (q *QueryAnalysis) IsShardable() bool {
 	return len(q.shardingLabels) > 0
 }

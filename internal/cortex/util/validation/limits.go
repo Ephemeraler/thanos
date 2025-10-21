@@ -79,7 +79,7 @@ type Limits struct {
 	MaxFetchedSeriesPerQuery     int            `yaml:"max_fetched_series_per_query" json:"max_fetched_series_per_query"`
 	MaxFetchedChunkBytesPerQuery int            `yaml:"max_fetched_chunk_bytes_per_query" json:"max_fetched_chunk_bytes_per_query"`
 	MaxQueryLookback             model.Duration `yaml:"max_query_lookback" json:"max_query_lookback"`
-	MaxQueryLength               model.Duration `yaml:"max_query_length" json:"max_query_length"`
+	MaxQueryLength               model.Duration `yaml:"max_query_length" json:"max_query_length"` // --query-range.max-query-length
 	MaxQueryParallelism          int            `yaml:"max_query_parallelism" json:"max_query_parallelism"`
 	CardinalityLimit             int            `yaml:"cardinality_limit" json:"cardinality_limit"`
 	MaxCacheFreshness            model.Duration `yaml:"max_cache_freshness" json:"max_cache_freshness"`
@@ -273,11 +273,13 @@ type TenantLimits interface {
 // Overrides periodically fetch a set of per-user overrides, and provides convenience
 // functions for fetching the correct value.
 type Overrides struct {
+	// 默认限制, 默认限制 frontend 由命令行参数传递
 	defaultLimits *Limits
-	tenantLimits  TenantLimits
+	// 租户限制
+	tenantLimits TenantLimits
 }
 
-// NewOverrides makes a new Overrides.
+// NewOverrides 当前这个版本 thanos 还没有使用 tenantLimits.
 func NewOverrides(defaults Limits, tenantLimits TenantLimits) (*Overrides, error) {
 	return &Overrides{
 		tenantLimits:  tenantLimits,
@@ -635,6 +637,7 @@ func (o *Overrides) AlertmanagerMaxAlertsSizeBytes(userID string) int {
 	return o.getOverridesForUser(userID).AlertmanagerMaxAlertsSizeBytes
 }
 
+// getOverridesForUser 获取租户限制, 当无租户限制配置时, 返回默认限制.
 func (o *Overrides) getOverridesForUser(userID string) *Limits {
 	if o.tenantLimits != nil {
 		l := o.tenantLimits.ByUserID(userID)

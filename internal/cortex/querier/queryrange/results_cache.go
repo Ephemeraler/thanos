@@ -7,11 +7,12 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/thanos-io/thanos/pkg/extpromql"
 	"net/http"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/thanos-io/thanos/pkg/extpromql"
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
@@ -403,6 +404,7 @@ func (s resultsCache) isOffsetCachable(r Request) bool {
 	return offsetCachable
 }
 
+// getHeaderValuesWithName 返回响应中指定的 header 值.
 func getHeaderValuesWithName(r Response, headerName string) (headerValues []string) {
 	for _, hv := range r.GetHeaders() {
 		if hv.GetName() != headerName {

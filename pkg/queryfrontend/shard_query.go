@@ -18,7 +18,7 @@ import (
 	"github.com/thanos-io/thanos/pkg/store/storepb"
 )
 
-// PromQLShardingMiddleware creates a new Middleware that shards PromQL aggregations using grouping labels.
+// PromQLShardingMiddleware 创建 ShardingMiddleware.
 func PromQLShardingMiddleware(queryAnalyzer querysharding.Analyzer, numShards int, limits queryrange.Limits, merger queryrange.Merger, registerer prometheus.Registerer) queryrange.Middleware {
 	return queryrange.MiddlewareFunc(func(next queryrange.Handler) queryrange.Handler {
 		queriesTotal := promauto.With(registerer).NewCounterVec(prometheus.CounterOpts{
@@ -27,6 +27,7 @@ func PromQLShardingMiddleware(queryAnalyzer querysharding.Analyzer, numShards in
 			Help:      "Total number of queries analyzed by the sharding middleware",
 		}, []string{"shardable"})
 
+		// 初始化 series, 否则无法调用 Inc() 等数值操作方法.
 		queriesTotal.WithLabelValues("true")
 		queriesTotal.WithLabelValues("false")
 
@@ -35,7 +36,7 @@ func PromQLShardingMiddleware(queryAnalyzer querysharding.Analyzer, numShards in
 			limits:        limits,
 			queryAnalyzer: queryAnalyzer,
 			numShards:     numShards,
-			merger:        merger,
+			merger:        merger, // Codec
 			queriesTotal:  queriesTotal,
 		}
 	})
@@ -44,18 +45,20 @@ func PromQLShardingMiddleware(queryAnalyzer querysharding.Analyzer, numShards in
 type querySharder struct {
 	next   queryrange.Handler
 	limits queryrange.Limits
-
+	// 分片分析器
 	queryAnalyzer querysharding.Analyzer
 	numShards     int
-	merger        queryrange.Merger
+	// Codec
+	merger queryrange.Merger
 
 	// Metrics
 	queriesTotal *prometheus.CounterVec
 }
 
+// Do
 func (s querySharder) Do(ctx context.Context, r queryrange.Request) (queryrange.Response, error) {
+	// 分片分析器
 	analysis, err := s.queryAnalyzer.Analyze(r.GetQuery())
-
 	if err != nil || !analysis.IsShardable() {
 		s.queriesTotal.WithLabelValues("false").Inc()
 		return s.next.Do(ctx, r)
@@ -81,12 +84,15 @@ func (s querySharder) Do(ctx context.Context, r queryrange.Request) (queryrange.
 	return response, nil
 }
 
+// shardQuery 将请求分片成多个子请求.
 func (s querySharder) shardQuery(r queryrange.Request, analysis querysharding.QueryAnalysis) []queryrange.Request {
 	tr, ok := r.(ShardedRequest)
 	if !ok {
 		return []queryrange.Request{r}
 	}
 
+	// TODO 疑问点: Frontend 分片的话, 不应该明确告诉 downstream 它要负责查询什么数据吗?
+	// 他告诉 downstream 总共分片数, 已经当前请求的分片索引是为什么? 难道是 querier 根据分片信息来计算自己负责的部分?
 	reqs := make([]queryrange.Request, s.numShards)
 	for i := 0; i < s.numShards; i++ {
 		reqs[i] = tr.WithShardInfo(&storepb.ShardInfo{
