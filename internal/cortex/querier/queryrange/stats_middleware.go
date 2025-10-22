@@ -12,7 +12,7 @@ import (
 // statsMiddleware
 type statsMiddleware struct {
 	next Handler
-	// query-frontend.force-query-stats
+	// --query-frontend.force-query-stats, 默认值 false
 	forceStats bool
 }
 

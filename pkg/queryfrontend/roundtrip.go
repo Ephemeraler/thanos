@@ -67,7 +67,7 @@ func NewTripperware(config Config, reg prometheus.Registerer, logger log.Logger)
 		queryRangeLimits,
 		queryRangeCodec,
 		config.NumShards,
-		config.CortexHandlerConfig.QueryStatsEnabled,
+		config.CortexHandlerConfig.QueryStatsEnabled, // --query-frontend.force-query-stats
 		prometheus.WrapRegistererWith(prometheus.Labels{"tripperware": "query_range"}, reg), logger, config.ForwardHeaders)
 	if err != nil {
 		return nil, err

@@ -62,9 +62,11 @@
    1. LabelsTripper, QueryRangeTripper 使用该层, 参数与命令行对应设置已在 internal/cortex/querier/queryrange/limit.go:Limit接口中注释
    2. 当前我在看的这个版本 LimitsMiddleware 并没有实现 TenantLimit 功能, 但是已经预留扩展位.
    3. 根据 --query-range.max-query-length 检查 end - start 查询的时间范围长度是否超过设置的默认值. 默认值 0. 0 表示没有限制, 否则判断 end - time 是否超过限制, 若是则直接返回, 不会再继续下层请求处理..
+   4. Do
+      该函数对 LookBack 和 QueryLength 的限制进行判断. 超过限制的则直接返回或修改部分请求参数. 值得注意的是 Thanos 当前并未使用 LookBack 限制, 并且该 Lookback 与 prometheu 的 lookback 意义完全不同. Thanos LookBack 是指逻辑上该 Frontend 持久的数据中 "最旧" 的时间点, 超过该时间的查询要么直接返回(End < Lookback), 要么将请求参数修改(start < Lookback 时, start = now - lookback). 而 Prometheus Lookback 是在表达式执行阶段, 每个时间点能够寻找的样本范围. QueryLength 超限则直接返回.
 
-
-9.  
+9. StatsMiddleware
+    1. frontend 中 --query-frontend.force-query-stats(默认 force)参数影响该层.
 
 ### 问题
 1. pkg/queryfrontend/request.go:ThanosLabelsRequest 中各个参数的作用都是由谁负责实现的, 具体功能是什么?

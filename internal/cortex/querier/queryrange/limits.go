@@ -56,7 +56,7 @@ func NewLimitsMiddleware(l Limits) Middleware {
 	})
 }
 
-// Do 检查 --query-range.max-query-length 限制(end - start的查询范围长度).
+// Do 检查范围查询的 lookback 与 querylength 限制. lookback 表示的当前 thanos 当前持有的 "最旧" 数据的时间点. querylength 表示最大的查询范围限制.
 func (l limitsMiddleware) Do(ctx context.Context, r Request) (Response, error) {
 	log, ctx := spanlogger.New(ctx, "limits")
 	defer log.Finish()
@@ -66,7 +66,9 @@ func (l limitsMiddleware) Do(ctx context.Context, r Request) (Response, error) {
 		return nil, httpgrpc.Errorf(http.StatusBadRequest, "%s", err.Error())
 	}
 
-	// Clamp the time range based on the max query lookback.
+	// frontend 中没有使用到该部分代码.
+	// 这部分代码逻辑表示 lookback 是 thanos 能够查询的 "最旧" 的数据时间点, 控制的是查询时间范围. 与 Prometheus 中的 lookback 含义完全不同.
+	// Prometheus 的 lookback-delta 是一种“柔性窗口”，用于补齐短暂的样本缺口
 	if maxQueryLookback := validation.SmallestPositiveNonZeroDurationPerTenant(tenantIDs, l.MaxQueryLookback); maxQueryLookback > 0 {
 		minStartTime := util.TimeToMillis(time.Now().Add(-maxQueryLookback))
 
