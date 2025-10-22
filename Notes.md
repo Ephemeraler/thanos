@@ -65,11 +65,26 @@
    4. Do
       该函数对 LookBack 和 QueryLength 的限制进行判断. 超过限制的则直接返回或修改部分请求参数. 值得注意的是 Thanos 当前并未使用 LookBack 限制, 并且该 Lookback 与 prometheu 的 lookback 意义完全不同. Thanos LookBack 是指逻辑上该 Frontend 持久的数据中 "最旧" 的时间点, 超过该时间的查询要么直接返回(End < Lookback), 要么将请求参数修改(start < Lookback 时, start = now - lookback). 而 Prometheus Lookback 是在表达式执行阶段, 每个时间点能够寻找的样本范围. QueryLength 超限则直接返回.
 
-9. StatsMiddleware
-    1. frontend 中 --query-frontend.force-query-stats(默认 force)参数影响该层.
+9. StatsMiddleware(先放弃)
+    1. frontend 中 --query-frontend.force-query-stats(默认 false)参数影响该层.
+
+    遗留的问题: 
+    1. 为什么 pkg/queryfrontend/request.go:ThanosQueryRangeRequest 的 With 函数都是在拷贝 ThanosQueryRangeRequest 中设置值并返回拷贝请求呢?
+    2. pkg/queryfrontend/request.go:ThanosQueryRangeRequest 中 Stats 变量的作用?
+    3. 响应中的 Stats 变量又是干什么的呢?
+
+10. StepAlignMiddleware
+    由命令行参数 --query-range.align-range-with-step 控制. 默认为 true. 该层主要是调整start, end参数值, 使得 start, end 向下偏移到能够被 step 整除的时间点.
+
+    遗留问题: 对齐的好处有哪些?
+
+11. DownsampledMiddlewar
+    
+12.  
 
 ### 问题
 1. pkg/queryfrontend/request.go:ThanosLabelsRequest 中各个参数的作用都是由谁负责实现的, 具体功能是什么?
 2. pkg/queryfrontend/request.go:ThanosSeriesRequest 中各个参数的作用都是由谁负责实现的, 具体功能是什么?
 3. pkg/queryfrontend/request.go:ThanosQueryInstantRequest 中各个参数的作用都是由谁负责实现的, 具体功能是什么?
 4. pkg/queryfrontend/request.go:ThanosQueryRangeRequest 中各个参数的作用都是由谁负责实现的, 具体功能是什么?
+5. pkg/queryfrontend/request.go: 为什么 With 函数都是 clone 份 request 再设置后返回拷贝的 request.

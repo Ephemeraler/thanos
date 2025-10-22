@@ -97,6 +97,7 @@ func (r *ThanosQueryRangeRequest) GetStats() string { return r.Stats }
 
 func (r *ThanosQueryRangeRequest) GetSplitInterval() time.Duration { return r.SplitInterval }
 
+// WithStats 拷贝 ThanosQueryRangeRequest 并将参数(stats)设置给 Stats 变量后, 返回 copied ThanosQueryRangeRequest.
 func (r *ThanosQueryRangeRequest) WithStats(stats string) queryrange.Request {
 	q := *r
 	q.Stats = stats
