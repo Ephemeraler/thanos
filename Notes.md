@@ -79,8 +79,25 @@
     遗留问题: 对齐的好处有哪些?
 
 11. DownsampledMiddlewar
-    
-12.  
+    1. 降采样层什么条件下开启，什么条件下关闭？
+       首先, frontend 发送的请求中就没有关于降采样开启/关闭的参数, 只有 `max_source_resolution`, 通过该参数才会决定降采样层会不会开启. 当 `max_source_resolution` == `auto` 时, 会开启降采样(置ThanosQueryRangeRequest.AutoSampling = true), 同时会将ThanosQueryRangeRequest.MaxSourceResolution 设置为 step / 5.   
+
+    2. 降采样层为什么需要额外请求？因为数据当前分辨率请求获取的数据不完整.
+    3. metric:thanos_frontend_downsampled_extra_queries_total 表示将采样需要额外的请求
+    4. 我现在唯一不明白的一点就是为什么选择 step / 5? 
+       是 Thanos 官方的一个经验魔数. GPT 给出了一个解释"你的面板每 step 秒画一个点；让数据源分辨率 ≤ step/5，基本能保证每个点位附近总有样本可用（减少对齐抖动、陈旧窗口等带来的“取不到值"
+
+  整理 max_source_resolution 的参数对 DownsamplingMiddleware的作用
+  - 非 auto
+    max_source_resolution != "auto" 时，这个 Middleware 直接放行到 next，不会改写分辨率、也不会做任何重试。
+
+  - auto 路径
+    先把 max_source_resolution 设为 step/5
+    用这个分辨率发起一次查询。
+    检查结果是否“覆盖完整时间范围”（按步长对齐后看是否存在“预期时间戳缺失/空洞”之类的判定）。如果不完整：
+      把 max_source_resolution 提升到比当前更大的“下一个默认档位”（如 raw→5m、5m→1h），
+      重新发起请求并合并结果；
+      循环，直到“时间范围被完整覆盖”或“已无更高默认档位可用”
 
 ### 问题
 1. pkg/queryfrontend/request.go:ThanosLabelsRequest 中各个参数的作用都是由谁负责实现的, 具体功能是什么?

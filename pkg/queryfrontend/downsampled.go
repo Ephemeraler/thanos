@@ -31,10 +31,8 @@ func DownsampledMiddleware(merger queryrange.Merger, registerer prometheus.Regis
 }
 
 type downsampled struct {
-	next   queryrange.Handler
-	merger queryrange.Merger
-
-	// Metrics.
+	next                   queryrange.Handler
+	merger                 queryrange.Merger
 	additionalQueriesCount prometheus.Counter
 }
 
@@ -45,7 +43,6 @@ var resolutions = []int64{downsample.ResLevel1, downsample.ResLevel2}
 // 无论 http 请求是否使用降采样, 只要命令行参数设定--query-range.request-downsampled=true, 就会使用降采样.
 func (d downsampled) Do(ctx context.Context, req queryrange.Request) (queryrange.Response, error) {
 	tqrr, ok := req.(*ThanosQueryRangeRequest)
-	// 检查请求是否为 query range 且是否开启了自动降采样.
 	if !ok || !tqrr.AutoDownsampling {
 		return d.next.Do(ctx, req)
 	}
@@ -58,26 +55,30 @@ func (d downsampled) Do(ctx context.Context, req queryrange.Request) (queryrange
 	)
 
 forLoop:
-	// 默认 i = 0 开始循环.
+	// i = [0, 2)
 	for i < len(resolutions) {
 		if i > 0 {
-			// i > 0 表示再一次请求, 但是为什么需要请求?
+			// 为什么只有 i > 0 的时候才会执行？
+			// 因为当 i = 0 的时候, 一定会执行一次 next. 当 i > 0 时, 说明循环至少已经执行过1次.
 			d.additionalQueriesCount.Inc()
 		}
-		// 请求体.
+
+		// 为什么是 ThanosQueryRangeRequest 副本?
+		// 因为需要保留原始请求的参数, 多次请求的参数都是基于原始参数修改的.
 		r := *tqrr
-		// 直接发出请求.
+
+		// 执行下一层.
 		resp, err = d.next.Do(ctx, &r)
 		if err != nil {
 			return nil, err
 		}
-		// 将响应添加到响应列表中等待处理.
 		resps = append(resps, resp)
-		// Set MaxSourceResolution for next request, if any.
-		// MaxSourceResolution 要么是在一更大级别的分辨率, 要么是原始值(1h).
+
+		// 找到最小的、且严格大于当前 MaxSourceResolution 的默认分辨率.
+		// 将其设置为 MaxSourceResolution
 		for i < len(resolutions) {
 			if tqrr.MaxSourceResolution < resolutions[i] {
-				// 只要能进来就说明请求要么是 auto, 要么是 raw data.
+				// 表示当前请求中 MaxSourceResolution < 当前分辨率级别.
 				tqrr.AutoDownsampling = false
 				tqrr.MaxSourceResolution = resolutions[i]
 				break
@@ -99,19 +100,21 @@ forLoop:
 		// 找到响应中最小时间戳, 找不到就说明当前分辨率没有返回数据.
 		m := minResponseTime(resp)
 		switch m {
-		case tqrr.Start: // Response not impacted by retention policy.
-			// 响应数据中最小时间戳为 start.
+		case tqrr.Start:
+			// 返回的数据最小时间点正好是请求的开始时间.
 			break forLoop
-		case -1: // Empty response, retry with higher MaxSourceResolution.
-			// 没有数据. 继续请求, 此时请求的是更高的分辨率.
+		case -1:
+			// 本次请求的分辨率没有数据, 继续请求一次更大分辨率或已经无更大分辨率就退出.
 			continue
 		default:
-			// TODO : 这里的逻辑是啥? 为什么结束时间 = 响应数据中最小时间 - 请求步长.
+			// 只返回了部分数据, [start, m) 之间的数据还没有返回回来.
 			tqrr.End = m - tqrr.Step
 		}
+		// 判断 m - step 是不是已经超过边界了. 之所以有这个问题，得研究后面。查询[start, end]到底会从start点开始返回吗？有可能不会，因为对齐的原因.
 		if tqrr.Start > tqrr.End {
 			break forLoop
 		}
+		// 表示当前分辨率中缺失部分数据, 所以向更高分辨率去请求.
 	}
 
 	// 合并响应.
@@ -122,17 +125,16 @@ forLoop:
 	return response, nil
 }
 
-// minResponseTime 返回最小时间戳, 前提是返回的数据中数据点必须是时间严格递增. 若无数据则返回 -1.
-// 我猜测, 当返回 -1 的时候不一定是没有对应分辨率的数据, 有可能是数据量过大而不返回.
+// minResponseTime 返回最小时间戳, 若无数据则返回 -1.
 func minResponseTime(r queryrange.Response) int64 {
+	// res 是 Matrix.
 	var res = r.(*queryrange.PrometheusResponse).Data.Result
 	if len(res) == 0 || (len(res[0].Samples) == 0 && len(res[0].Histograms) == 0) {
+		// 没有任何 Metric || 有 Metric 但是没有样本点 || 有 Metric 但是没有样本点.
 		return -1
 	}
 
 	minTs := int64(math.MaxInt64)
-
-	//TODO: Samples 和 Histograms 不一样? 是不是 Histogram 类型是单独字段保存的?
 	for _, sampleStream := range res {
 		if len(sampleStream.Samples) > 0 {
 			if ts := sampleStream.Samples[0].TimestampMs; ts < minTs {
