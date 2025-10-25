@@ -1,6 +1,6 @@
 1. Tripperware
    - TenancyTripper (pkg/tenancy/tenancy.go): 对租户信息统一处理
-     - RouterTripper (pkg/queryfrontend/roundtrip.go): 路由请求到对应的下层 Tripperware.
+     - RouterTripper (pkg/queryfrontend/roundtrip.go): 路由请求到对应的下层 Tripperware. 本层有 thanos_query_frontend_queries_total
        - LabelsTripper(pkg/queryfrontend/roundtrip.go): 到这一层即是 http.RoundTripper 又是 Handler.
          - DownstreamTripper
            - http.Transport
@@ -98,6 +98,74 @@
       把 max_source_resolution 提升到比当前更大的“下一个默认档位”（如 raw→5m、5m→1h），
       重新发起请求并合并结果；
       循环，直到“时间范围被完整覆盖”或“已无更高默认档位可用”
+
+12. SplitMiddleware
+    1. 开启条件:
+       命令行参数 --query-range.split-interval(默认24h) 不为 0.
+       或者
+       命令行参数 --query-range.min-split-interval(默认0) 不为 0.
+
+       --query-range.split-interval 参数解释 Split query range requests by an interval and execute in parallel, it should be greater than 0 when query-range.response-cache-config is configured."
+
+       --query-range.min-split-interval 参数解释 Split query range requests above this interval in query-range.horizontal-shards requests of equal range.Using this parameter is not allowed with query-range.split-interval.One should also set query-range.split-min-horizontal-shards to a value greater than 1 to enable splitting.
+    2. 参数中Split相关的有好多个, split Interval 到底应该使用哪个?
+       参数中涉及到的 split 参数:
+         --query-range.split-interval, 默认值: 24h
+         --query-range.max-split-interval, 默认值: 0
+         --query-range.min-split-interval, 默认值: 0
+         --query-range.horizontal-shards, 默认值: 0
+
+       选用原理:
+         当静态 Split Interval != 0 时，使用静态 Split Interval(--query-range.split-interval);
+         否则, 当请求查询的范围(end - start) > Max Split Interval(--query-range.max-split-interval) 时, 使用 Max Split Interval;
+         否则, 当请求查询的范围(end - start) > Min Split Interval(--query-range.min-split-interval) 时, 使用 查询范围/水平分片数(--query-range.horizontal-shard)
+         否则, 使用 Min Split Interval
+    
+    3. 该层 Metric
+       thanos_frontend_split_queries_total
+
+    4. Do 实现过程
+       - ThanosQueryRangeRequest 类型
+         - 替换查询语句中的 @ start()/end(), 确保 split 之后导致 request 中 start, end 改变不影响原始查询语义;
+         - 循环切分原始请求. 切分的逻辑比较复杂, 每个请求中都做了 interval 对齐等操作. 要么 start 能被 interval 整除, 要么就是 end 能被 interval整除。也就是让每一个请求能落到对齐的interval内.
+       - SplitRequest 类型
+         - 直接切分子请求, 切分逻辑简单就是按照 interval 直接切分. 最后一个请求需要做边界判断.
+
+    5. 涉及到的额外知识
+       1. 查询语句中 @ modifier 的作用
+          可以在 instant 和 range 查询中使用, @ 后接 unix timestamp(浮点数, 小数表示subsecond)
+          例如:
+          `http_requesst_total @ 1609746000` 返回的就是 2021-01-04T07:40:00+00:00 时间点的值.
+          `rate(http_requests_total[5m] @ 1609746000)`  返回的就是 2021-01-04T07:40:00+00:00 时间点的值
+
+          但是值得注意的是: @ 只决定取什么时间点的数据，并不决定响应中 Sample 的时间戳. 响应中Sample的时间戳仍然是由request中的时间参数控制.
+
+          此外，需要注意的是，在 query range 查询中, @ 后面支持两个宏函数: start()、end() 分别对应start、end参数.
+       2. 
+
+    **待确认:**
+    6. --query-range.split-interval 若为 0, --query-range.max-split-interval 和 --query-range.max-slpite-interval 应该就不会为 0, 这个可能在参数校验时有检测. 否则的话 pkg/queryfrontend/roundtrip.go: dynamicIntervalFn 肯定会 panic, 因为这两个参数都是除数, 0 不能做除数.
+
+
+13. PromShardingMiddleware(Vertical Sharding)
+    1. 开启的条件
+       --Squery-frontend.vertical-shards > 0
+    2. [Vertical Query Sharding](https://thanos.io/tip/proposals-accepted/202205-vertical-query-sharding.md/)
+       Thanos 中提出了查询分片算法，通过将查询执行分布到多个 Thanos Quierier 节点上来提升较大规模查询时的查询速度.
+       Thanos Sharding 算法包括:
+         - Vertical Sharding: 按照时间序列(series)维度对查询进行分片. 用于解决高基数指标查询.
+         - Horizontal Sharding: 按照查询时间的范围维度对查询进行分片. 用于解决长时间跨度指标查询.
+       vertical sharding 的主要思想就是将raw query拆分成多个不相交的 sub queries, 能够并行的处理分发到多个 querier 上, 减少单个 querier 的负载.
+
+       当前存在的缺陷:
+       由于是 series 维度进行切分, 所以得先知道有哪些 series 才能进行切分. 会导致拉取 downstream 下所有 series, 可能会导致当前内存占用过高.
+
+       分片算法:
+       每个分片请求都携带总分片数、当前分片所属分区以及在 PromQL 中识别到的分区标签给 Stores. 这样 Store 根据这些信息就可以知道自己应该只返回哪些数据.
+       
+       垂直分片还有很多问题, 比如虽然在 frontend/querier 看起来在并行查询. 但是, 当前的存储结构series可能存在局部性原理。不同的分片可能在同一个 block 内部, 导致不同 store 对同一个block重复读取多次. 这种问题带来的影响开销目前 thanos 官方并没有实测.
+    3. 本层指标: thanos_frontend_sharding_middleware_querier_total
+
 
 ### 问题
 1. pkg/queryfrontend/request.go:ThanosLabelsRequest 中各个参数的作用都是由谁负责实现的, 具体功能是什么?

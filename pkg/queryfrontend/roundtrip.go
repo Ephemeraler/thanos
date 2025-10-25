@@ -209,6 +209,7 @@ func newQueryRangeTripperware(
 		)
 	}
 
+	// SplitByInterval
 	if config.SplitQueriesByInterval != 0 || config.MinQuerySplitInterval != 0 {
 		queryIntervalFn := dynamicIntervalFn(config)
 
@@ -266,24 +267,38 @@ func newQueryRangeTripperware(
 	}, nil
 }
 
+// dynamicIntervalFn 动态计算确定 split interval 的值. 使用优先顺序如下:
+// 当静态 Split Interval != 0 时，使用静态 Split Interval(--query-range.split-interval);
+// 否则, 当请求查询的范围(end - start) > Max Split Interval(--query-range.max-split-interval) 时, 使用 Max Split Interval;
+// 否则, 当请求查询的范围(end - start) > Min Split Interval(--query-range.min-split-interval) 时, 使用 查询范围/水平分片数(--query-range.horizontal-shard)
+// 否则, 使用 Min Split Interval
 func dynamicIntervalFn(config QueryRangeConfig) queryrange.IntervalFn {
 	return func(r queryrange.Request) time.Duration {
-		// Use static interval, by default.
+		// 默认情况下, 当 --query-range.split-interval 不为 0 时, 优先返回该参数值作为切分间隔.
 		if config.SplitQueriesByInterval != 0 {
 			return config.SplitQueriesByInterval
 		}
 
+		// 疑惑: (r.GetEnd() - r.GetStart()) 的结果就是 ms 啊, 这个代码在做什么呢?
+		// 回答: 该代码唯一的作用就是将毫秒整数类型转换成time.Duration类型.
+		//       首先, time.Duration 本质是 int, 存储的是 nanoseconds. time.Duration(x) 表示的都是 x ns.
+		//       但是, 如果将 x * 10^6, time.Duration(x *10^6) 表示的就是 x ms. (1ms = 10^6ns)
+		//       而 time 包中的常量 Millisecond, Second 其实最终都是用 nanosecond 表示的.
 		queryInterval := time.Duration(r.GetEnd()-r.GetStart()) * time.Millisecond
-		// If the query is multiple of max interval, we use the max interval to split.
+
+		// 如果查询范围大于max-split-interval, 则使用 max-split-interval.
+		// TODO: 待验证想法, 命令行参数校验时 --query-range.split-interval = 0, 那 --query-range.min/max-split-interval 就不应该是 0, 否则 0 会作为除数.
 		if queryInterval/config.MaxQuerySplitInterval >= 2 {
 			return config.MaxQuerySplitInterval
 		}
 
+		// 如果查询范围大于min-split-interval 则, 使用 queryinterval / query-range.horizontal-shard
 		if queryInterval > config.MinQuerySplitInterval {
 			// If the query duration is less than max interval, we split it equally in HorizontalShards.
 			return time.Duration(queryInterval.Milliseconds()/config.HorizontalShards) * time.Millisecond
 		}
 
+		// 使用 min-split-interval
 		return config.MinQuerySplitInterval
 	}
 }

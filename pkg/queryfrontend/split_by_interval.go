@@ -36,21 +36,14 @@ func SplitByIntervalMiddleware(interval queryrange.IntervalFn, limits queryrange
 }
 
 type splitByInterval struct {
-	next   queryrange.Handler
-	limits queryrange.Limits
-	merger queryrange.Merger
-	// 子请求时间窗口
-	interval queryrange.IntervalFn
-
-	// Metrics.
+	next           queryrange.Handler
+	limits         queryrange.Limits
+	merger         queryrange.Merger
+	interval       queryrange.IntervalFn // 动态获取 split interval 的函数.
 	splitByCounter prometheus.Counter
 }
 
 func (s splitByInterval) Do(ctx context.Context, r queryrange.Request) (queryrange.Response, error) {
-	// First we're going to build new requests, one for each day, taking care
-	// to line up the boundaries with step.
-
-	// 子请求列表
 	reqs, err := splitQuery(r, s.interval(r))
 	if err != nil {
 		return nil, err
@@ -75,15 +68,15 @@ func (s splitByInterval) Do(ctx context.Context, r queryrange.Request) (queryran
 	return response, nil
 }
 
-// splitQuery 将请求以时间窗口(interval)划分为多个子请求, 并返回子请求列表.
+// splitQuery r 为原始请求, interval 为 split interval.
 func splitQuery(r queryrange.Request, interval time.Duration) ([]queryrange.Request, error) {
 	var reqs []queryrange.Request
 
-	// TODO: 这里有一点我有点晕, ThanosQueryRangeRequest 也是 SplitRequest 呀.
 	switch tr := r.(type) {
 	case *ThanosQueryRangeRequest:
 		// Replace @ modifier function to their respective constant values in the query.
 		// This way subqueries will be evaluated at the same time as the parent query.
+		// 这里确实要做常量替换，因为一旦切分，request中的start、end参数就会改变，就违反了最初的查询目的.
 		query, err := queryrange.EvaluateAtModifierFunction(r.GetQuery(), r.GetStart(), r.GetEnd())
 		if err != nil {
 			return nil, err
@@ -121,10 +114,14 @@ func splitQuery(r queryrange.Request, interval time.Duration) ([]queryrange.Requ
 // Round up to the step before the next interval boundary.
 func nextIntervalBoundary(t, step int64, interval time.Duration) int64 {
 	msPerInterval := int64(interval / time.Millisecond)
+	// 下一个请求的开始时间.
 	startOfNextInterval := ((t / msPerInterval) + 1) * msPerInterval
 	// ensure that target is a multiple of steps away from the start time
+	// 下一个请求开始时间之前, 与 step 对齐的最后一个采样点.
 	target := startOfNextInterval - ((startOfNextInterval - t) % step)
 	if target == startOfNextInterval {
+		// 防止边界重复, 因为这个所谓的边界其实是 end 参数. 所以, end 应该是边界之前的一个数据点.
+		// 所以这里就解释通了为什么 for 循环 start = nextIntervalBoundary + step.
 		target -= step
 	}
 	return target

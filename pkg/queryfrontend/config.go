@@ -226,13 +226,18 @@ type QueryRangeConfig struct {
 	// --query-range.align-range-with-step
 	AlignRangeWithStep bool
 	// --query-range.request-downsampled
-	RequestDownsampled     bool
+	RequestDownsampled bool
+	// --query-range.split-interval, 默认值: 24h
 	SplitQueriesByInterval time.Duration
-	MinQuerySplitInterval  time.Duration
-	MaxQuerySplitInterval  time.Duration
-	HorizontalShards       int64
-	MaxRetries             int
-	Limits                 *cortexvalidation.Limits
+
+	// query-range.min-split-interval, 默认值: 0
+	MinQuerySplitInterval time.Duration
+
+	// --query-range.max-split-interval, 默认值: 0
+	MaxQuerySplitInterval time.Duration
+	HorizontalShards      int64
+	MaxRetries            int
+	Limits                *cortexvalidation.Limits
 }
 
 // LabelsConfig holds the config for labels tripperware.
